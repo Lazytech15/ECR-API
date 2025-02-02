@@ -20,48 +20,43 @@ app.use(express.json());
 
 const upload = multer({ dest: 'uploads/' });
 
-const server = createServer(app);
-const wss = new WebSocketServer({ server });
-
-// Create connection pool
-const pool = mysql.createPool({
-  host: 'srv1319.hstgr.io',
-  user: 'u428388148_ecr_username',
-  password: '3hD7n;?7qTB@',
-  database: 'u428388148_ecr_database',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  keepAliveInitialDelay: 10000,
-  enableKeepAlive: true
-});
-
-const promisePool = pool.promise();
-
-// WebSocket connection handler
-wss.on('connection', (ws) => {
-  console.log('Client connected');
+// Centralized configuration using environment variables
+const config = {
+    db: {
+      host: process.env.DB_HOST || 'srv1319.hstgr.io',
+      user: process.env.DB_USER || 'u428388148_ecr_username',
+      password: process.env.DB_PASSWORD || '3hD7n;?7qTB@',
+      database: process.env.DB_NAME || 'u428388148_ecr_database',
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+      keepAliveInitialDelay: 10000,
+      enableKeepAlive: true
+    },
+    email: {
+      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+      port: parseInt(process.env.EMAIL_PORT || '587'),
+      user: process.env.EMAIL_USER || 'projectipt00@gmail.com',
+      password: process.env.EMAIL_PASSWORD || 'vxbx lnmy dxiy znlp',
+      secure: process.env.EMAIL_SECURE === 'true' || false
+    }
+  };
   
-  ws.on('close', () => {
-    console.log('Client disconnected');
+  // Create connection pool using config
+  const pool = mysql.createPool(config.db);
+  const promisePool = pool.promise();
+  
+  // Email configuration using config
+  const transporter = nodemailer.createTransport({
+    host: config.email.host,
+    port: config.email.port,
+    secure: config.email.secure,
+    auth: {
+      user: config.email.user,
+      pass: config.email.password
+    },
+    tls: { rejectUnauthorized: false }
   });
-
-  ws.on('error', (error) => {
-    console.error('WebSocket error:', error);
-  });
-});
-
-// Email configuration
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  auth: {
-    user: 'projectipt00@gmail.com',
-    pass: 'vxbx lnmy dxiy znlp'
-  },
-  tls: { rejectUnauthorized: false }
-});
 
 // ENDPOINT 1: Authentication and User Management
 app.post('/api/auth', async (req, res) => {
