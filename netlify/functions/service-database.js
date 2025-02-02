@@ -272,39 +272,90 @@ router.all('/grades', upload.single('file'), async (req, res) => {
       bufferStream.push(req.file.buffer);
       bufferStream.push(null);
 
+      // Column mapping from CSV to database
+      const columnMap = {
+        'STUDENT_NUM': 'student_num',
+        'STUDENT_NAME': 'student_name',
+        'ACADEMIC_YEAR': 'academic_year',
+        'TRIMESTER': 'semester',  // Assuming your DB uses 'semester' instead of 'trimester'
+        'SECTION': 'section',
+        'DAY': 'day',
+        'TIME': 'time',
+        'COURSE_CODE': 'course_code',
+        'COURSE_DESCRIPTION': 'course_description',
+        'EMAIL': 'email',
+        'PRELIM_GRADE': 'prelim_grade',
+        'MIDTERM_GRADE': 'midterm_grade',
+        'FINAL_GRADE': 'final_grade',
+        'CREDIT_UNITS': 'credit_units',
+        'FACULTY_ID': 'faculty_id',
+        'FACULTY_NAME': 'faculty_name',
+        'ECR_NAME': 'ecr_name'
+      };
+
       await new Promise((resolve, reject) => {
         bufferStream
           .pipe(csv())
           .on('data', (row) => {
+            // Transform the row data to match database columns
+            const transformedRow = Object.keys(row).reduce((acc, key) => {
+              const dbColumn = columnMap[key];
+              if (dbColumn) {
+                acc[dbColumn] = row[key];
+              }
+              return acc;
+            }, {});
+
             const prelim = parseFloat(row.PRELIM_GRADE) || 0;
             const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
             const final = parseFloat(row.FINAL_GRADE) || 0;
             const gwa = (prelim + midterm + final) / 3;
             
-            results.push({
-              ...row,
-              GWA: gwa.toFixed(2),
-              REMARK: midterm && final ? (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC'
-            });
+            // Add calculated fields
+            transformedRow.gwa = gwa.toFixed(2);
+            transformedRow.remark = midterm && final ? 
+              (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC';
+            
+            results.push(transformedRow);
           })
           .on('end', resolve)
           .on('error', reject);
       });
 
-      for (const row of results) {
-        await promisePool.query(
-          'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
-          [row, row]
-        );
+      // Use transaction for bulk insert
+      const connection = await promisePool.getConnection();
+      try {
+        await connection.beginTransaction();
+        
+        for (const row of results) {
+          await connection.query(
+            'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
+            [row, row]
+          );
+        }
+        
+        await connection.commit();
+        return res.json({ 
+          success: true, 
+          count: results.length,
+          message: `Successfully processed ${results.length} grade records`
+        });
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
       }
-
-      return res.json({ success: true, count: results.length });
     }
 
     return res.status(405).json({ success: false, message: 'Method not allowed' });
   } catch (error) {
     console.error('Grades error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error', 
+      details: error.message 
+    });
   }
 });
 
