@@ -141,9 +141,9 @@ router.post('/auth', async (req, res) => {
         }
 
         return res.status(401).json({ success: false, message: 'Invalid credentials' });
-
+        // trimester
       case 'register':
-        const { studentId, firstName, middleName, lastName, course, section, trimester } = data;
+        const { studentId, firstName, middleName, lastName, course, section } = data;
         const fullName = middleName ? `${firstName} ${middleName} ${lastName}` : `${firstName} ${lastName}`;
         const username = generateUsername(firstName, lastName, studentId);
         const plainPassword = generatePassword();
@@ -170,12 +170,13 @@ router.post('/auth', async (req, res) => {
             full_name: fullName,
             course,
             section,
-            trimester,
             email: data.email,
             username,
             password: hashedPassword
           }
         );
+
+        // trimester,
 
         return res.json({ success: true, credentials: { username, password: plainPassword } });
 
