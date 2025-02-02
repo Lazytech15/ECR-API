@@ -12,24 +12,25 @@ const app = express();
 // Configure CORS with multiple origins
 const allowedOrigins = [
   'http://127.0.0.1:5500',
+  'http://127.0.0.1:5173',  // Added for Vite's default port
   'http://localhost:5500',
+  'http://localhost:5173',  // Added for Vite's default port
   'http://localhost:3000',
-  'http://localhost:5173',
-  'https://time-keeper-track-teacher.netlify.app',
-  'https://time-keeper-track-student.netlify.app',
-  'https://project-to-ipt01.netlify.app'
+  'https://ecr-api-connection-database.netlify.app'  // Added https://
 ];
 
 app.use(cors({
   origin: function (origin, callback) {
+    // For development - allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes('*')) {
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
     }
   },
-  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],  // Added PUT
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
   maxAge: 86400
