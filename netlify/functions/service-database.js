@@ -517,7 +517,7 @@ router.delete('/teachers/:teacherId', async (req, res) => {
     const { teacherId } = req.params;
     
     const [result] = await promisePool.query(
-      'DELETE FROM users WHERE teacher_id = ? AND role = "teacher"',
+      'DELETE FROM teacher WHERE teacher_id = ? AND role = "teacher"',
       [teacherId]
     );
 
