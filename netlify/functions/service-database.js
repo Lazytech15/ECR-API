@@ -143,7 +143,7 @@ router.post('/auth', async (req, res) => {
         return res.status(401).json({ success: false, message: 'Invalid credentials' });
 
       case 'register':
-        const { studentId, firstName, middleName, lastName, course, section, trimester } = data;
+        const { studentId, firstName, middleName, lastName, course, section, academic_term } = data;
         const fullName = middleName ? `${firstName} ${middleName} ${lastName}` : `${firstName} ${lastName}`;
         const username = generateUsername(firstName, lastName, studentId);
         const plainPassword = generatePassword();
@@ -170,7 +170,7 @@ router.post('/auth', async (req, res) => {
             full_name: fullName,
             course,
             section,
-            trimester,
+            academic_term,
             email: data.email,
             username,
             password: hashedPassword
@@ -201,7 +201,7 @@ router.post('/auth', async (req, res) => {
               updates.password = await bcrypt.hash(newPassword, 10);
             }
             if (newSection) updates.section = newSection;
-            if (newTrimester) updates.trimester = newTrimester;
+            if (newTrimester) updates.academic_term = newTrimester;
             if (newEmail) updates.email = newEmail;
             if (newCourse) updates.course = newCourse;
         
