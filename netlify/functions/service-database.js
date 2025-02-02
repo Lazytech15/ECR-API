@@ -11,6 +11,34 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Configure CORS with multiple origins
+const allowedOrigins = [
+  'http://127.0.0.1:5500',
+  'http://localhost:5500',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'https://time-keeper-track-teacher.netlify.app',
+  'https://time-keeper-track-student.netlify.app',
+  'https://project-to-ipt01.netlify.app'
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes('*')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  maxAge: 86400
+}));
+
+app.use(express.json());
+
 const upload = multer({ dest: 'uploads/' });
 
 // Centralized configuration using environment variables
