@@ -96,182 +96,229 @@ router.post('/auth', async (req, res) => {
 
     switch (action) {
       case 'login':
-        const { email, password } = data;
-        const sanitizedInput = email.trim().toLowerCase();
-
-        // Check students
-        const [students] = await promisePool.query(
-          'SELECT * FROM students WHERE LOWER(username) = ? OR LOWER(email) = ?',
-          [sanitizedInput, sanitizedInput]
-        );
-
-        if (students.length > 0) {
-          const student = students[0];
-          const match = await bcrypt.compare(password, student.password);
-          if (match) {
-            return res.json({
-              success: true,
-              user: {
-                id: student.id,
-                email: student.email,
-                student_id: student.student_id,
-                name: student.full_name,
-                role: 'student'
-              }
-            });
-          }
-        }
-
-        // Check teachers
-        const [teachers] = await promisePool.query(
-          'SELECT * FROM users WHERE LOWER(TRIM(email)) = ?',
-          [sanitizedInput]
-        );
-
-        if (teachers.length > 0 && await bcrypt.compare(password, teachers[0].password)) {
-          return res.json({
-            success: true,
-            user: {
-              id: teachers[0].id,
-              email: teachers[0].email,
-              name: teachers[0].teacher_name,
-              role: 'teacher'
-            }
-          });
-        }
-
-        return res.status(401).json({ success: false, message: 'Invalid credentials' });
-
+        await handleLogin(data, res);
+        break;
       case 'register':
-        const { studentId, firstName, middleName, lastName, course, section, academic_term } = data;
-        const fullName = middleName ? `${firstName} ${middleName} ${lastName}` : `${firstName} ${lastName}`;
-        const username = generateUsername(firstName, lastName, studentId);
-        const plainPassword = generatePassword();
-        
-        // Check existing
-        const [existing] = await promisePool.query(
-          'SELECT 1 FROM students WHERE student_id = ? OR email = ?',
-          [studentId, data.email]
-        );
-
-        if (existing.length > 0) {
-          return res.status(400).json({ success: false, message: 'Already registered' });
-        }
-
-        // Create new student
-        const hashedPassword = await bcrypt.hash(plainPassword, 10);
-        await promisePool.query(
-          'INSERT INTO students SET ?',
-          {
-            student_id: studentId,
-            first_name: firstName,
-            middle_name: middleName,
-            last_name: lastName,
-            full_name: fullName,
-            course,
-            section,
-            academic_term,
-            email: data.email,
-            username,
-            password: hashedPassword
-          }
-        );
-
-       
-
-        return res.json({ success: true, credentials: { username, password: plainPassword } });
-
-        case 'update':
-          const { studentId: updateId, currentPassword, newPassword, newSection, newTrimester, newEmail, newCourse } = data;
-          
-            const [studentToUpdate] = await promisePool.query(
-              'SELECT * FROM students WHERE student_id = ?',
-              [updateId]
-            );
-        
-            if (studentToUpdate.length === 0) {
-              return res.status(404).json({ success: false, message: 'Student not found' });
-            }
-        
-            const updates = {};
-            if (newPassword) {
-              if (!await bcrypt.compare(currentPassword, studentToUpdate[0].password)) {
-                return res.status(401).json({ success: false, message: 'Invalid current password' });
-              }
-              updates.password = await bcrypt.hash(newPassword, 10);
-            }
-            if (newSection) updates.section = newSection;
-            if (newTrimester) updates.academic_term = newTrimester;
-            if (newEmail) updates.email = newEmail;
-            if (newCourse) updates.course = newCourse;
-        
-            if (Object.keys(updates).length === 0) {
-              return res.json({ success: true, message: 'No changes to update' });
-            }
-        
-            await promisePool.query(
-              'UPDATE students SET ? WHERE student_id = ?',
-              [updates, updateId]
-            );
-        
-            // Broadcast update through WebSocket
-            wsService.broadcast({
-              type: 'database_update',
-              changes: {
-                students_update: [updateId]
-              }
-            });
-        
-            return res.json({ success: true, message: 'Update successful' });
-
-            case 'delete-student':
-              const { studentId: deleteId } = data;
-              
-              // Check if student exists
-              const [studentToDelete] = await promisePool.query(
-                'SELECT * FROM students WHERE student_id = ?',
-                [deleteId]
-              );
-      
-              if (studentToDelete.length === 0) {
-                return res.status(404).json({ success: false, message: 'Student not found' });
-              }
-      
-              // Delete the student
-              await promisePool.query(
-                'DELETE FROM students WHERE student_id = ?',
-                [deleteId]
-              );
-      
-              return res.json({ 
-                success: true, 
-                message: 'Student deleted successfully',
-                deletedStudent: studentToDelete[0]
-              });
-
-      case 'get-alldata': 
-        const { studentId: emailStudentId } = data;
-
-        const [studentData] = await promisePool.query(
-          'SELECT * FROM students WHERE student_id = ?',
-          [emailStudentId]
-        );
-
-        if (studentData.length > 0) {
-          const student = studentData[0];
-          return res.json({ success: true, student });
-        } else {
-          return res.status(404).json({ success: false, message: 'Student not found' });
-        }
-
+        await handleRegister(data, res);
+        break;
+      case 'update':
+        await handleUpdate(data, res);
+        break;
+      case 'delete-student':
+        await handleDeleteStudent(data, res);
+        break;
+      case 'delete-grade':
+        await handleDeleteGrade(data, res);
+        break;
+      case 'get-alldata':
+        await handleGetAllData(data, res);
+        break;
       default:
-        return res.status(400).json({ success: false, message: 'Invalid action' });
+        res.status(400).json({ success: false, message: 'Invalid action' });
     }
   } catch (error) {
     console.error('Auth error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
+
+const handleLogin = async (data, res) => {
+  const { email, password } = data;
+  const sanitizedInput = email.trim().toLowerCase();
+
+  // Check students
+  const [students] = await promisePool.query(
+    'SELECT * FROM students WHERE LOWER(username) = ? OR LOWER(email) = ?',
+    [sanitizedInput, sanitizedInput]
+  );
+
+  if (students.length > 0) {
+    const student = students[0];
+    const match = await bcrypt.compare(password, student.password);
+    if (match) {
+      return res.json({
+        success: true,
+        user: {
+          id: student.id,
+          email: student.email,
+          student_id: student.student_id,
+          name: student.full_name,
+          role: 'student'
+        }
+      });
+    }
+  }
+
+  // Check teachers
+  const [teachers] = await promisePool.query(
+    'SELECT * FROM users WHERE LOWER(TRIM(email)) = ?',
+    [sanitizedInput]
+  );
+
+  if (teachers.length > 0 && await bcrypt.compare(password, teachers[0].password)) {
+    return res.json({
+      success: true,
+      user: {
+        id: teachers[0].id,
+        email: teachers[0].email,
+        name: teachers[0].teacher_name,
+        role: 'teacher'
+      }
+    });
+  }
+
+  res.status(401).json({ success: false, message: 'Invalid credentials' });
+};
+
+const handleRegister = async (data, res) => {
+  const { studentId, firstName, middleName, lastName, course, section, academic_term } = data;
+  const fullName = middleName ? `${firstName} ${middleName} ${lastName}` : `${firstName} ${lastName}`;
+  const username = generateUsername(firstName, lastName, studentId);
+  const plainPassword = generatePassword();
+
+  // Check existing
+  const [existing] = await promisePool.query(
+    'SELECT 1 FROM students WHERE student_id = ? OR email = ?',
+    [studentId, data.email]
+  );
+
+  if (existing.length > 0) {
+    return res.status(400).json({ success: false, message: 'Already registered' });
+  }
+
+  // Create new student
+  const hashedPassword = await bcrypt.hash(plainPassword, 10);
+  await promisePool.query(
+    'INSERT INTO students SET ?',
+    {
+      student_id: studentId,
+      first_name: firstName,
+      middle_name: middleName,
+      last_name: lastName,
+      full_name: fullName,
+      course,
+      section,
+      academic_term,
+      email: data.email,
+      username,
+      password: hashedPassword
+    }
+  );
+
+  res.json({ success: true, credentials: { username, password: plainPassword } });
+};
+
+const handleUpdate = async (data, res) => {
+  const { studentId: updateId, currentPassword, newPassword, newSection, newTrimester, newEmail, newCourse } = data;
+
+  const [studentToUpdate] = await promisePool.query(
+    'SELECT * FROM students WHERE student_id = ?',
+    [updateId]
+  );
+
+  if (studentToUpdate.length === 0) {
+    return res.status(404).json({ success: false, message: 'Student not found' });
+  }
+
+  const updates = {};
+  if (newPassword) {
+    if (!await bcrypt.compare(currentPassword, studentToUpdate[0].password)) {
+      return res.status(401).json({ success: false, message: 'Invalid current password' });
+    }
+    updates.password = await bcrypt.hash(newPassword, 10);
+  }
+  if (newSection) updates.section = newSection;
+  if (newTrimester) updates.academic_term = newTrimester;
+  if (newEmail) updates.email = newEmail;
+  if (newCourse) updates.course = newCourse;
+
+  if (Object.keys(updates).length === 0) {
+    return res.json({ success: true, message: 'No changes to update' });
+  }
+
+  await promisePool.query(
+    'UPDATE students SET ? WHERE student_id = ?',
+    [updates, updateId]
+  );
+
+  // Broadcast update through WebSocket
+  wsService.broadcast({
+    type: 'database_update',
+    changes: {
+      students_update: [updateId]
+    }
+  });
+
+  res.json({ success: true, message: 'Update successful' });
+};
+
+const handleDeleteStudent = async (data, res) => {
+  const { studentId: deleteId } = data;
+
+  // Check if student exists
+  const [studentToDelete] = await promisePool.query(
+    'SELECT * FROM students WHERE student_id = ?',
+    [deleteId]
+  );
+
+  if (studentToDelete.length === 0) {
+    return res.status(404).json({ success: false, message: 'Student not found' });
+  }
+
+  // Delete the student
+  await promisePool.query(
+    'DELETE FROM students WHERE student_id = ?',
+    [deleteId]
+  );
+
+  res.json({
+    success: true,
+    message: 'Student deleted successfully',
+    deletedStudent: studentToDelete[0]
+  });
+};
+
+const handleDeleteGrade = async (data, res) => {
+  const { ecr_name: deleteEcrName } = data;
+
+  // Check if grade entry exists
+  const [gradeToDelete] = await promisePool.query(
+    'SELECT * FROM grades WHERE ecr_name = ?',
+    [deleteEcrName]
+  );
+
+  if (gradeToDelete.length === 0) {
+    return res.status(404).json({ success: false, message: 'Grade entry not found' });
+  }
+
+  // Delete the grade entry
+  await promisePool.query(
+    'DELETE FROM grades WHERE ecr_name = ?',
+    [deleteEcrName]
+  );
+
+  res.json({
+    success: true,
+    message: 'Grade entry deleted successfully',
+    deletedGrade: gradeToDelete[0]
+  });
+};
+
+const handleGetAllData = async (data, res) => {
+  const { studentId: emailStudentId } = data;
+
+  const [studentData] = await promisePool.query(
+    'SELECT * FROM students WHERE student_id = ?',
+    [emailStudentId]
+  );
+
+  if (studentData.length > 0) {
+    const student = studentData[0];
+    res.json({ success: true, student });
+  } else {
+    res.status(404).json({ success: false, message: 'Student not found' });
+  }
+};
 
 // ENDPOINT 2: Grades Management
 router.all('/grades', upload.single('file'), async (req, res) => {
@@ -295,95 +342,100 @@ router.all('/grades', upload.single('file'), async (req, res) => {
 
     // GET: Fetch grades
     if (req.method === 'GET') {
-      const { teacherId, studentId } = req.query;
-      
-      if (req.query.schema === 'true') {
-        return res.json({ 
-          success: true, 
-          columns: columns.map(col => ({
-            name: col.COLUMN_NAME,
-            type: col.DATA_TYPE,
-            nullable: col.IS_NULLABLE,
-            key: col.COLUMN_KEY
-          }))
-        });
-      }
-
-      const query = teacherId ? 
-        'SELECT * FROM grades WHERE faculty_id = ?' :
-        'SELECT * FROM grades WHERE student_num = ?';
-      
-      const [grades] = await promisePool.query(query, [teacherId || studentId]);
-      return res.json({ success: true, grades });
+      await handleGetGrades(req, res, columns);
+    } else if (req.method === 'POST') {
+      await handlePostGrades(req, res, columns);
+    } else {
+      res.status(405).json({ success: false, message: 'Method not allowed' });
     }
-    
-    // POST: Upload grades
-    if (req.method === 'POST') {
-      if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
-
-      const results = [];
-      const columnNames = columns.map(col => col.COLUMN_NAME.toLowerCase());
-      
-      // Create a readable stream from the buffer
-      const bufferStream = new require('stream').Readable();
-      bufferStream.push(req.file.buffer);
-      bufferStream.push(null);
-
-      await new Promise((resolve, reject) => {
-        bufferStream
-          .pipe(csv())
-          .on('data', (row) => {
-            // Transform row keys to match database column names
-            const transformedRow = {};
-            Object.entries(row).forEach(([key, value]) => {
-              const normalizedKey = key.toLowerCase();
-              if (columnNames.includes(normalizedKey)) {
-                transformedRow[normalizedKey] = value;
-              }
-            });
-
-            const prelim = parseFloat(row.PRELIM_GRADE) || 0;
-            const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
-            const final = parseFloat(row.FINAL_GRADE) || 0;
-            const gwa = (prelim + midterm + final) / 3;
-            
-            transformedRow.gwa = gwa.toFixed(2);
-            transformedRow.remark = midterm && final ? 
-              (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC';
-            
-            results.push(transformedRow);
-          })
-          .on('end', resolve)
-          .on('error', reject);
-      });
-
-      for (const row of results) {
-        await promisePool.query(
-          'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
-          [row, row]
-        );
-      }
-
-      return res.json({ 
-        success: true, 
-        count: results.length,
-        tableInfo: {
-          columnCount: columns.length,
-          columns: columns.map(col => col.COLUMN_NAME)
-        }
-      });
-    }
-
-    return res.status(405).json({ success: false, message: 'Method not allowed' });
   } catch (error) {
     console.error('Grades error:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Server error',
       error: error.message
     });
   }
 });
+
+const handleGetGrades = async (req, res, columns) => {
+  const { teacherId, studentId } = req.query;
+
+  if (req.query.schema === 'true') {
+    return res.json({
+      success: true,
+      columns: columns.map(col => ({
+        name: col.COLUMN_NAME,
+        type: col.DATA_TYPE,
+        nullable: col.IS_NULLABLE,
+        key: col.COLUMN_KEY
+      }))
+    });
+  }
+
+  const query = teacherId ?
+    'SELECT * FROM grades WHERE faculty_id = ?' :
+    'SELECT * FROM grades WHERE student_num = ?';
+
+  const [grades] = await promisePool.query(query, [teacherId || studentId]);
+  res.json({ success: true, grades });
+};
+
+const handlePostGrades = async (req, res, columns) => {
+  if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+
+  const results = [];
+  const columnNames = columns.map(col => col.COLUMN_NAME.toLowerCase());
+
+  // Create a readable stream from the buffer
+  const bufferStream = new require('stream').Readable();
+  bufferStream.push(req.file.buffer);
+  bufferStream.push(null);
+
+  await new Promise((resolve, reject) => {
+    bufferStream
+      .pipe(csv())
+      .on('data', (row) => {
+        // Transform row keys to match database column names
+        const transformedRow = {};
+        Object.entries(row).forEach(([key, value]) => {
+          const normalizedKey = key.toLowerCase();
+          if (columnNames.includes(normalizedKey)) {
+            transformedRow[normalizedKey] = value;
+          }
+        });
+
+        const prelim = parseFloat(row.PRELIM_GRADE) || 0;
+        const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
+        const final = parseFloat(row.FINAL_GRADE) || 0;
+        const gwa = (prelim + midterm + final) / 3;
+
+        transformedRow.gwa = gwa.toFixed(2);
+        transformedRow.remark = midterm && final ?
+          (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC';
+
+        results.push(transformedRow);
+      })
+      .on('end', resolve)
+      .on('error', reject);
+  });
+
+  for (const row of results) {
+    await promisePool.query(
+      'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
+      [row, row]
+    );
+  }
+
+  res.json({
+    success: true,
+    count: results.length,
+    tableInfo: {
+      columnCount: columns.length,
+      columns: columns.map(col => col.COLUMN_NAME)
+    }
+  });
+};
 
 // ENDPOINT 3: Communication
 router.post('/communicate', async (req, res) => {
@@ -398,14 +450,14 @@ router.post('/communicate', async (req, res) => {
           subject: data.subject,
           html: data.content
         });
-        return res.json({ success: true });
-
+        res.json({ success: true });
+        break;
       case 'notification':
         // Add notification logic here if needed
-        return res.json({ success: true });
-
+        res.json({ success: true });
+        break;
       default:
-        return res.status(400).json({ success: false, message: 'Invalid communication type' });
+        res.status(400).json({ success: false, message: 'Invalid communication type' });
     }
   } catch (error) {
     console.error('Communication error:', error);
