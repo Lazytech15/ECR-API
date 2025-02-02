@@ -1,12 +1,13 @@
 [build]
   functions = "netlify/functions"
   command = "npm run build"
+  publish = "netlify/functions"
+
+[functions]
+  external_node_modules = ["mysql2"]
+  node_bundler = "esbuild"
 
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/service-database/:splat"
   status = 200
-
-[functions]
-  node_bundler = "esbuild"
-  external_node_modules = ["mysql2"]

@@ -4,7 +4,7 @@
     "type": "module",
     "scripts": {
       "start": "netlify dev",
-      "build": "netlify build",
+      "build": "netlify functions:build",
       "dev": "netlify dev"
     },
     "dependencies": {
