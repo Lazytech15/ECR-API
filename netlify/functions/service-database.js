@@ -17,7 +17,6 @@ const allowedOrigins = [
   'http://localhost:5500',
   'http://localhost:5173',
   'http://localhost:3000',
-  'https://mailer.cyberdyne.top',
   'https://ecr-api-connection-database.netlify.app'
 ];
 
@@ -298,18 +297,29 @@ const handleDeleteGrade = async (data, res) => {
 };
 
 const handleGetAllData = async (data, res) => {
-  const { studentId: emailStudentId } = data;
+  try {
+    // If studentId is provided, return specific student
+    if (data.studentId) {
+      const [studentData] = await promisePool.query(
+        'SELECT * FROM students WHERE student_id = ?',
+        [data.studentId]
+      );
 
-  const [studentData] = await promisePool.query(
-    'SELECT * FROM students WHERE student_id = ?',
-    [emailStudentId]
-  );
-
-  if (studentData.length > 0) {
-    const student = studentData[0];
-    res.json({ success: true, student });
-  } else {
-    res.status(404).json({ success: false, message: 'Student not found' });
+      if (studentData.length > 0) {
+        return res.json({ success: true, student: studentData[0] });
+      } else {
+        return res.status(404).json({ success: false, message: 'Student not found' });
+      }
+    }
+    
+    // Otherwise return all students for admin dashboard
+    const [students] = await promisePool.query(
+      'SELECT student_id, full_name, course FROM students'
+    );
+    res.json({ success: true, students });
+  } catch (error) {
+    console.error('Error fetching data:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
@@ -454,6 +464,70 @@ router.post('/communicate', async (req, res) => {
     }
   } catch (error) {
     console.error('Communication error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// ENDPOINT 4: File Upload
+router.get('/teachers', async (req, res) => {
+  try {
+    const [teachers] = await promisePool.query(
+      'SELECT teacher_id, teacher_name, personal_email, username FROM users WHERE role = "teacher"'
+    );
+    res.json({ success: true, teachers });
+  } catch (error) {
+    console.error('Error fetching teachers:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+router.post('/teachers', async (req, res) => {
+  try {
+    const { teacher_name, personal_email, username, password } = req.body;
+    
+    // Check if teacher already exists
+    const [existing] = await promisePool.query(
+      'SELECT 1 FROM users WHERE personal_email = ? OR username = ?',
+      [personal_email, username]
+    );
+
+    if (existing.length > 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Teacher with this email or username already exists' 
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    await promisePool.query(
+      'INSERT INTO users (teacher_name, personal_email, username, password, role) VALUES (?, ?, ?, ?, "teacher")',
+      [teacher_name, personal_email, username, hashedPassword]
+    );
+
+    res.json({ success: true, message: 'Teacher added successfully' });
+  } catch (error) {
+    console.error('Error adding teacher:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+router.delete('/teachers/:teacherId', async (req, res) => {
+  try {
+    const { teacherId } = req.params;
+    
+    const [result] = await promisePool.query(
+      'DELETE FROM users WHERE teacher_id = ? AND role = "teacher"',
+      [teacherId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Teacher not found' });
+    }
+
+    res.json({ success: true, message: 'Teacher deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting teacher:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
