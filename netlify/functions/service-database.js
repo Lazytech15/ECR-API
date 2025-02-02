@@ -32,7 +32,6 @@ app.use(cors({
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
   maxAge: 86400
 }));
 
@@ -48,7 +47,6 @@ app.options('*', cors({
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
   maxAge: 86400
 }));
 
@@ -56,6 +54,8 @@ app.use(express.json());
 
 // Example route to test CORS
 app.post('/api/auth', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.json({ message: 'CORS is working!' });
 });
 
@@ -63,7 +63,6 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
-
 
 const upload = multer({ dest: 'uploads/' });
 
