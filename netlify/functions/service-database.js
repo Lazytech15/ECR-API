@@ -48,19 +48,19 @@ const upload = multer({
 // Database configuration
 const config = {
   db: {
-    host: process.env.DB_HOST || 'srv1319.hstgr.io',
-    user: process.env.DB_USER || 'u428388148_ecr_username',
-    password: process.env.DB_PASSWORD || '3hD7n;?7qTB@',
-    database: process.env.DB_NAME || 'u428388148_ecr_database',
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0
   },
   email: {
-    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.EMAIL_PORT || '587'),
-    user: process.env.EMAIL_USER || 'projectipt00@gmail.com',
-    password: process.env.EMAIL_PASSWORD || 'vxbx lnmy dxiy znlp',
+    host: process.env.EMAIL_HOST,
+    port: parseInt(process.env.EMAIL_PORT),
+    user: process.env.EMAIL_USER,
+    password: process.env.EMAIL_PASSWORD,
     secure: process.env.EMAIL_SECURE === 'true' || false
   }
 };
