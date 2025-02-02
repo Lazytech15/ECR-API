@@ -161,7 +161,7 @@ router.post('/auth', async (req, res) => {
 
         // Create new student
         const hashedPassword = await bcrypt.hash(plainPassword, 10);
-        await connection.promise().query(
+        await promisePool.query(
           'INSERT INTO students SET ?',
           {
             student_id: studentId,
@@ -177,19 +177,6 @@ router.post('/auth', async (req, res) => {
             password: hashedPassword
           }
         );
-
-        // Send welcome email
-        // await transporter.sendMail({
-        //   from: '"ECR Online Grade" <projectipt00@gmail.com>',
-        //   to: data.email,
-        //   subject: 'Welcome to ECR Online Grade',
-        //   html: `
-        //     <h2>Welcome to ECR Online Grade</h2>
-        //     <p>Your login credentials:</p>
-        //     <p>Username: ${username}</p>
-        //     <p>Password: ${plainPassword}</p>
-        //   `
-        // });
 
         return res.json({ success: true, credentials: { username, password: plainPassword } });
 
