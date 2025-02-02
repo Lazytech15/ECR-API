@@ -141,9 +141,9 @@ router.post('/auth', async (req, res) => {
         }
 
         return res.status(401).json({ success: false, message: 'Invalid credentials' });
-        // trimester
+
       case 'register':
-        const { studentId, firstName, middleName, lastName, course, section } = data;
+        const { studentId, firstName, middleName, lastName, course, section, trimester } = data;
         const fullName = middleName ? `${firstName} ${middleName} ${lastName}` : `${firstName} ${lastName}`;
         const username = generateUsername(firstName, lastName, studentId);
         const plainPassword = generatePassword();
@@ -170,13 +170,14 @@ router.post('/auth', async (req, res) => {
             full_name: fullName,
             course,
             section,
+            trimester,
             email: data.email,
             username,
             password: hashedPassword
           }
         );
 
-        // trimester,
+       
 
         return res.json({ success: true, credentials: { username, password: plainPassword } });
 
@@ -250,9 +251,39 @@ router.post('/auth', async (req, res) => {
 // ENDPOINT 2: Grades Management
 router.all('/grades', upload.single('file'), async (req, res) => {
   try {
+    // Get table schema information
+    const [columns] = await promisePool.query(`
+      SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'grades'
+      ORDER BY ORDINAL_POSITION;
+    `);
+
+    // Log table structure for debugging
+    console.log('Table Structure:', columns.map(col => ({
+      name: col.COLUMN_NAME,
+      type: col.DATA_TYPE,
+      nullable: col.IS_NULLABLE,
+      key: col.COLUMN_KEY
+    })));
+
     // GET: Fetch grades
     if (req.method === 'GET') {
       const { teacherId, studentId } = req.query;
+      
+      if (req.query.schema === 'true') {
+        return res.json({ 
+          success: true, 
+          columns: columns.map(col => ({
+            name: col.COLUMN_NAME,
+            type: col.DATA_TYPE,
+            nullable: col.IS_NULLABLE,
+            key: col.COLUMN_KEY
+          }))
+        });
+      }
+
       const query = teacherId ? 
         'SELECT * FROM grades WHERE faculty_id = ?' :
         'SELECT * FROM grades WHERE student_num = ?';
@@ -266,52 +297,31 @@ router.all('/grades', upload.single('file'), async (req, res) => {
       if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
 
       const results = [];
+      const columnNames = columns.map(col => col.COLUMN_NAME.toLowerCase());
       
       // Create a readable stream from the buffer
       const bufferStream = new require('stream').Readable();
       bufferStream.push(req.file.buffer);
       bufferStream.push(null);
 
-      // Column mapping from CSV to database
-      const columnMap = {
-        'STUDENT_NUM': 'student_num',
-        'STUDENT_NAME': 'student_name',
-        'ACADEMIC_YEAR': 'academic_year',
-        'TRIMESTER': 'trimester',  // Assuming your DB uses 'semester' instead of 'trimester'
-        'SECTION': 'section',
-        'DAY': 'day',
-        'TIME': 'time',
-        'COURSE_CODE': 'course_code',
-        'COURSE_DESCRIPTION': 'course_description',
-        'EMAIL': 'email',
-        'PRELIM_GRADE': 'prelim_grade',
-        'MIDTERM_GRADE': 'midterm_grade',
-        'FINAL_GRADE': 'final_grade',
-        'CREDIT_UNITS': 'credit_units',
-        'FACULTY_ID': 'faculty_id',
-        'FACULTY_NAME': 'faculty_name',
-        'ECR_NAME': 'ecr_name'
-      };
-
       await new Promise((resolve, reject) => {
         bufferStream
           .pipe(csv())
           .on('data', (row) => {
-            // Transform the row data to match database columns
-            const transformedRow = Object.keys(row).reduce((acc, key) => {
-              const dbColumn = columnMap[key];
-              if (dbColumn) {
-                acc[dbColumn] = row[key];
+            // Transform row keys to match database column names
+            const transformedRow = {};
+            Object.entries(row).forEach(([key, value]) => {
+              const normalizedKey = key.toLowerCase();
+              if (columnNames.includes(normalizedKey)) {
+                transformedRow[normalizedKey] = value;
               }
-              return acc;
-            }, {});
+            });
 
             const prelim = parseFloat(row.PRELIM_GRADE) || 0;
             const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
             const final = parseFloat(row.FINAL_GRADE) || 0;
             const gwa = (prelim + midterm + final) / 3;
             
-            // Add calculated fields
             transformedRow.gwa = gwa.toFixed(2);
             transformedRow.remark = midterm && final ? 
               (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC';
@@ -322,30 +332,21 @@ router.all('/grades', upload.single('file'), async (req, res) => {
           .on('error', reject);
       });
 
-      // Use transaction for bulk insert
-      const connection = await promisePool.getConnection();
-      try {
-        await connection.beginTransaction();
-        
-        for (const row of results) {
-          await connection.query(
-            'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
-            [row, row]
-          );
-        }
-        
-        await connection.commit();
-        return res.json({ 
-          success: true, 
-          count: results.length,
-          message: `Successfully processed ${results.length} grade records`
-        });
-      } catch (error) {
-        await connection.rollback();
-        throw error;
-      } finally {
-        connection.release();
+      for (const row of results) {
+        await promisePool.query(
+          'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
+          [row, row]
+        );
       }
+
+      return res.json({ 
+        success: true, 
+        count: results.length,
+        tableInfo: {
+          columnCount: columns.length,
+          columns: columns.map(col => col.COLUMN_NAME)
+        }
+      });
     }
 
     return res.status(405).json({ success: false, message: 'Method not allowed' });
@@ -353,8 +354,8 @@ router.all('/grades', upload.single('file'), async (req, res) => {
     console.error('Grades error:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Server error', 
-      details: error.message 
+      message: 'Server error',
+      error: error.message
     });
   }
 });
