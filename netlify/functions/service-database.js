@@ -6,7 +6,7 @@ import csv from 'csv-parser';
 import nodemailer from 'nodemailer';
 import serverless from 'serverless-http';
 import multer from 'multer';
-import { Buffer } from 'buffer';
+import fs from 'fs';
 
 const app = express();
 const router = express.Router();
@@ -79,6 +79,16 @@ const transporter = nodemailer.createTransport({
   },
   tls: { rejectUnauthorized: false }
 });
+
+// Helper Functions
+const generateUsername = (firstName, lastName, studentId) => {
+  return `${firstName.toLowerCase().substring(0, 2)}${lastName.toLowerCase().substring(0, 2)}${studentId.slice(-4)}`;
+};
+
+const generatePassword = () => {
+  const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  return Array.from({ length: 10 }, () => charset[Math.floor(Math.random() * charset.length)]).join('');
+};
 
 // ENDPOINT 1: Authentication and User Management
 router.post('/auth', async (req, res) => {
