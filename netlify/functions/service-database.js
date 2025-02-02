@@ -224,6 +224,31 @@ router.post('/auth', async (req, res) => {
         
             return res.json({ success: true, message: 'Update successful' });
 
+            case 'delete-student':
+              const { studentId: deleteId } = data;
+              
+              // Check if student exists
+              const [studentToDelete] = await promisePool.query(
+                'SELECT * FROM students WHERE student_id = ?',
+                [deleteId]
+              );
+      
+              if (studentToDelete.length === 0) {
+                return res.status(404).json({ success: false, message: 'Student not found' });
+              }
+      
+              // Delete the student
+              await promisePool.query(
+                'DELETE FROM students WHERE student_id = ?',
+                [deleteId]
+              );
+      
+              return res.json({ 
+                success: true, 
+                message: 'Student deleted successfully',
+                deletedStudent: studentToDelete[0]
+              });
+
       case 'get-alldata': 
         const { studentId: emailStudentId } = data;
 
