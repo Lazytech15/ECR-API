@@ -241,14 +241,6 @@ const handleUpdate = async (data, res) => {
     [updates, updateId]
   );
 
-  // Broadcast update through WebSocket
-  wsService.broadcast({
-    type: 'database_update',
-    changes: {
-      students_update: [updateId]
-    }
-  });
-
   res.json({ success: true, message: 'Update successful' });
 };
 
