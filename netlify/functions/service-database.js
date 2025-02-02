@@ -151,7 +151,7 @@ const handleLogin = async (data, res) => {
 
   // Check teachers
   const [teachers] = await promisePool.query(
-    'SELECT * FROM teacher WHERE LOWER(TRIM(email)) = ? OR LOWER(username) = ?',
+    'SELECT * FROM teacher WHERE LOWER(personal_email) = ? OR LOWER(username) = ?',
     [sanitizedInput, sanitizedInput]
   );
   
@@ -167,19 +167,21 @@ const handleLogin = async (data, res) => {
     });
   }
 
-const [admin] = await promisePool.query(
+  // Check admin
+  const [admin] = await promisePool.query(
     'SELECT * FROM admin WHERE LOWER(username) = ?',
     [sanitizedInput]
-);
+  );
 
-if (admin.length > 0 && await bcrypt.compare(password, admin[0].password)) {
+  if (admin.length > 0 && await bcrypt.compare(password, admin[0].password)) {
     return res.json({
       success: true,
       user: {
+        username: admin[0].username,
         role: 'admin'
       }
     });
-}
+  }
 
   res.status(401).json({ success: false, message: 'Invalid credentials' });
 };
