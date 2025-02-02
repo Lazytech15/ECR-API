@@ -228,7 +228,7 @@ const handleUpdate = async (data, res) => {
     updates.password = await bcrypt.hash(newPassword, 10);
   }
   if (newSection) updates.section = newSection;
-  if (newTrimester) updates.academic_term = newTrimester;
+  if (newTrimester) updates.trimester = newTrimester;
   if (newEmail) updates.email = newEmail;
   if (newCourse) updates.course = newCourse;
 
