@@ -151,16 +151,16 @@ const handleLogin = async (data, res) => {
 
   // Check teachers
   const [teachers] = await promisePool.query(
-    'SELECT * FROM users WHERE LOWER(TRIM(email)) = ?',
-    [sanitizedInput]
+    'SELECT * FROM teacher WHERE LOWER(TRIM(email)) = ? OR LOWER(username) = ?',
+    [sanitizedInput, sanitizedInput]
   );
-
+  
   if (teachers.length > 0 && await bcrypt.compare(password, teachers[0].password)) {
     return res.json({
       success: true,
       user: {
-        id: teachers[0].id,
-        email: teachers[0].email,
+        id: teachers[0].teacher_id,
+        email: teachers[0].personal_email,
         name: teachers[0].teacher_name,
         role: 'teacher'
       }
@@ -472,7 +472,7 @@ router.post('/communicate', async (req, res) => {
 router.get('/teachers', async (req, res) => {
   try {
     const [teachers] = await promisePool.query(
-      'SELECT teacher_id, teacher_name, personal_email, username FROM users WHERE role = "teacher"'
+      'SELECT teacher_id, teacher_name, personal_email, username FROM teacher'
     );
     res.json({ success: true, teachers });
   } catch (error) {
@@ -483,26 +483,26 @@ router.get('/teachers', async (req, res) => {
 
 router.post('/teachers', async (req, res) => {
   try {
-    const { teacher_name, personal_email, username, password } = req.body;
+    const { teacher_id, teacher_name, personal_email, username, password } = req.body;
     
     // Check if teacher already exists
     const [existing] = await promisePool.query(
-      'SELECT 1 FROM users WHERE personal_email = ? OR username = ?',
-      [personal_email, username]
+      'SELECT 1 FROM teacher WHERE teacher_id = ? OR personal_email = ? OR username = ?',
+      [teacher_id, personal_email, username]
     );
 
     if (existing.length > 0) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Teacher with this email or username already exists' 
+        message: 'Teacher with this ID, email, or username already exists' 
       });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
     
     await promisePool.query(
-      'INSERT INTO users (teacher_name, personal_email, username, password, role) VALUES (?, ?, ?, ?, "teacher")',
-      [teacher_name, personal_email, username, hashedPassword]
+      'INSERT INTO teacher (teacher_id, teacher_name, personal_email, username, password) VALUES (?, ?, ?, ?, ?)',
+      [teacher_id, teacher_name, personal_email, username, hashedPassword]
     );
 
     res.json({ success: true, message: 'Teacher added successfully' });
@@ -517,7 +517,7 @@ router.delete('/teachers/:teacherId', async (req, res) => {
     const { teacherId } = req.params;
     
     const [result] = await promisePool.query(
-      'DELETE FROM teacher WHERE teacher_id = ? AND role = "teacher"',
+      'DELETE FROM teacher WHERE teacher_id = ?',
       [teacherId]
     );
 
