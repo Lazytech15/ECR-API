@@ -1,9 +1,10 @@
 [build]
-  functions = "netlify/functions"
   command = "npm run build"
+  functions = "netlify/functions"
   publish = "netlify/functions"
 
 [functions]
+  directory = "netlify/functions"
   external_node_modules = ["mysql2"]
   node_bundler = "esbuild"
 
