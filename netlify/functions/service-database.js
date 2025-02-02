@@ -198,7 +198,7 @@ const handleRegister = async (data, res) => {
       full_name: fullName,
       course,
       section,
-      academic_term,
+      trimester,
       email: data.email,
       username,
       password: hashedPassword
