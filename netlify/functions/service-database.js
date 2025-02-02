@@ -151,7 +151,7 @@ const handleLogin = async (data, res) => {
 
   // Check teachers
   const [teachers] = await promisePool.query(
-    'SELECT * FROM teacher WHERE LOWER(personal_email) = ? OR LOWER(username) = ?',
+    'SELECT * FROM teacher WHERE LOWER(username) = ? OR LOWER(personal_email) = ?',
     [sanitizedInput, sanitizedInput]
   );
   
