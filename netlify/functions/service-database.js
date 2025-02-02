@@ -6,7 +6,6 @@ import csv from 'csv-parser';
 import nodemailer from 'nodemailer';
 import serverless from 'serverless-http';
 import multer from 'multer';
-import fs from 'fs';
 
 const app = express();
 const router = express.Router();
@@ -263,11 +262,17 @@ router.all('/grades', upload.single('file'), async (req, res) => {
     
     // POST: Upload grades
     if (req.method === 'POST') {
-      if (!req.file) return res.status(400).json({ success: false, message: 'No file' });
+      if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
 
       const results = [];
+      
+      // Create a readable stream from the buffer
+      const bufferStream = new require('stream').Readable();
+      bufferStream.push(req.file.buffer);
+      bufferStream.push(null);
+
       await new Promise((resolve, reject) => {
-        fs.createReadStream(req.file.path)
+        bufferStream
           .pipe(csv())
           .on('data', (row) => {
             const prelim = parseFloat(row.PRELIM_GRADE) || 0;
@@ -292,14 +297,12 @@ router.all('/grades', upload.single('file'), async (req, res) => {
         );
       }
 
-      fs.unlinkSync(req.file.path);
       return res.json({ success: true, count: results.length });
     }
 
     return res.status(405).json({ success: false, message: 'Method not allowed' });
   } catch (error) {
     console.error('Grades error:', error);
-    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
