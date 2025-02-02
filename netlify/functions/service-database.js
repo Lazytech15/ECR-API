@@ -251,50 +251,58 @@ router.post('/auth', async (req, res) => {
 });
 
 // ENDPOINT 2: Grades Management
-router.post('/grades', upload.single('file'), async (req, res) => {
+router.all('/grades', upload.single('file'), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    // GET: Fetch grades
+    if (req.method === 'GET') {
+      const { teacherId, studentId } = req.query;
+      const query = teacherId ? 
+        'SELECT * FROM grades WHERE faculty_id = ?' :
+        'SELECT * FROM grades WHERE student_num = ?';
+      
+      const [grades] = await promisePool.query(query, [teacherId || studentId]);
+      return res.json({ success: true, grades });
     }
-
-    const results = [];
-    const fileContent = req.file.buffer.toString();
     
-    // Process CSV in memory
-    await new Promise((resolve, reject) => {
-      const parser = csv();
-      parser.on('data', (row) => {
-        const prelim = parseFloat(row.PRELIM_GRADE) || 0;
-        const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
-        const final = parseFloat(row.FINAL_GRADE) || 0;
-        const gwa = (prelim + midterm + final) / 3;
-        
-        results.push({
-          ...row,
-          GWA: gwa.toFixed(2),
-          REMARK: midterm && final ? (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC'
-        });
-      });
-      
-      parser.on('end', resolve);
-      parser.on('error', reject);
-      
-      // Feed the buffer directly to the parser
-      const bufferStream = require('stream').Readable.from(fileContent);
-      bufferStream.pipe(parser);
-    });
+    // POST: Upload grades
+    if (req.method === 'POST') {
+      if (!req.file) return res.status(400).json({ success: false, message: 'No file' });
 
-    // Insert results into database
-    for (const row of results) {
-      await promisePool.query(
-        'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
-        [row, row]
-      );
+      const results = [];
+      await new Promise((resolve, reject) => {
+        fs.createReadStream(req.file.path)
+          .pipe(csv())
+          .on('data', (row) => {
+            const prelim = parseFloat(row.PRELIM_GRADE) || 0;
+            const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
+            const final = parseFloat(row.FINAL_GRADE) || 0;
+            const gwa = (prelim + midterm + final) / 3;
+            
+            results.push({
+              ...row,
+              GWA: gwa.toFixed(2),
+              REMARK: midterm && final ? (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC'
+            });
+          })
+          .on('end', resolve)
+          .on('error', reject);
+      });
+
+      for (const row of results) {
+        await promisePool.query(
+          'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
+          [row, row]
+        );
+      }
+
+      fs.unlinkSync(req.file.path);
+      return res.json({ success: true, count: results.length });
     }
 
-    return res.json({ success: true, count: results.length });
+    return res.status(405).json({ success: false, message: 'Method not allowed' });
   } catch (error) {
     console.error('Grades error:', error);
+    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
