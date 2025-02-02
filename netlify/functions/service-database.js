@@ -277,7 +277,7 @@ router.all('/grades', upload.single('file'), async (req, res) => {
         'STUDENT_NUM': 'student_num',
         'STUDENT_NAME': 'student_name',
         'ACADEMIC_YEAR': 'academic_year',
-        'TRIMESTER': 'semester',  // Assuming your DB uses 'semester' instead of 'trimester'
+        'TRIMESTER': 'trimester',  // Assuming your DB uses 'semester' instead of 'trimester'
         'SECTION': 'section',
         'DAY': 'day',
         'TIME': 'time',
