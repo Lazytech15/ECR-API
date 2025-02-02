@@ -2,29 +2,28 @@ import express from 'express';
 import mysql from 'mysql2';
 import cors from 'cors';
 import bcrypt from 'bcrypt';
-import multer from 'multer';
 import csv from 'csv-parser';
-import fs from 'fs';
 import nodemailer from 'nodemailer';
+import serverless from 'serverless-http';
+import multer from 'multer';
+import { Buffer } from 'buffer';
 
 const app = express();
+const router = express.Router();
 
-// Configure CORS with multiple origins
+// Configure CORS
 const allowedOrigins = [
   'http://127.0.0.1:5500',
-  'http://127.0.0.1:5173',  // Added for Vite's default port
+  'http://127.0.0.1:5173',
   'http://localhost:5500',
-  'http://localhost:5173',  // Added for Vite's default port
+  'http://localhost:5173',
   'http://localhost:3000',
-  'https://ecr-api-connection-database.netlify.app'  // Added https://
+  'https://ecr-api-connection-database.netlify.app'
 ];
 
-app.use(cors({
+const corsOptions = {
   origin: function (origin, callback) {
-    // For development - allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -32,80 +31,57 @@ app.use(cors({
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
   maxAge: 86400
-}));
+};
 
-// Ensure preflight requests are handled
-app.options('*', cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  maxAge: 86400
-}));
-
+app.use(cors(corsOptions));
 app.use(express.json());
 
-// Example route to test CORS
-app.post('/api/auth', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.json({ message: 'CORS is working!' });
+// Configure multer to use memory storage instead of disk storage
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  }
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
-
-const upload = multer({ dest: 'uploads/' });
-
-// Centralized configuration using environment variables
+// Database configuration
 const config = {
-    db: {
-      host: process.env.DB_HOST || 'srv1319.hstgr.io',
-      user: process.env.DB_USER || 'u428388148_ecr_username',
-      password: process.env.DB_PASSWORD || '3hD7n;?7qTB@',
-      database: process.env.DB_NAME || 'u428388148_ecr_database',
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0,
-      keepAliveInitialDelay: 10000,
-      enableKeepAlive: true
-    },
-    email: {
-      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.EMAIL_PORT || '587'),
-      user: process.env.EMAIL_USER || 'projectipt00@gmail.com',
-      password: process.env.EMAIL_PASSWORD || 'vxbx lnmy dxiy znlp',
-      secure: process.env.EMAIL_SECURE === 'true' || false
-    }
-  };
-  
-  // Create connection pool using config
-  const pool = mysql.createPool(config.db);
-  const promisePool = pool.promise();
-  
-  // Email configuration using config
-  const transporter = nodemailer.createTransport({
-    host: config.email.host,
-    port: config.email.port,
-    secure: config.email.secure,
-    auth: {
-      user: config.email.user,
-      pass: config.email.password
-    },
-    tls: { rejectUnauthorized: false }
-  });
+  db: {
+    host: process.env.DB_HOST || 'srv1319.hstgr.io',
+    user: process.env.DB_USER || 'u428388148_ecr_username',
+    password: process.env.DB_PASSWORD || '3hD7n;?7qTB@',
+    database: process.env.DB_NAME || 'u428388148_ecr_database',
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+  },
+  email: {
+    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.EMAIL_PORT || '587'),
+    user: process.env.EMAIL_USER || 'projectipt00@gmail.com',
+    password: process.env.EMAIL_PASSWORD || 'vxbx lnmy dxiy znlp',
+    secure: process.env.EMAIL_SECURE === 'true' || false
+  }
+};
+
+const pool = mysql.createPool(config.db);
+const promisePool = pool.promise();
+
+const transporter = nodemailer.createTransport({
+  host: config.email.host,
+  port: config.email.port,
+  secure: config.email.secure,
+  auth: {
+    user: config.email.user,
+    pass: config.email.password
+  },
+  tls: { rejectUnauthorized: false }
+});
 
 // ENDPOINT 1: Authentication and User Management
-app.post('/api/auth', async (req, res) => {
+router.post('/auth', async (req, res) => {
   try {
     const { action, ...data } = req.body;
 
@@ -275,64 +251,56 @@ app.post('/api/auth', async (req, res) => {
 });
 
 // ENDPOINT 2: Grades Management
-app.all('/api/grades', upload.single('file'), async (req, res) => {
+router.post('/grades', upload.single('file'), async (req, res) => {
   try {
-    // GET: Fetch grades
-    if (req.method === 'GET') {
-      const { teacherId, studentId } = req.query;
-      const query = teacherId ? 
-        'SELECT * FROM grades WHERE faculty_id = ?' :
-        'SELECT * FROM grades WHERE student_num = ?';
-      
-      const [grades] = await promisePool.query(query, [teacherId || studentId]);
-      return res.json({ success: true, grades });
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
     }
+
+    const results = [];
+    const fileContent = req.file.buffer.toString();
     
-    // POST: Upload grades
-    if (req.method === 'POST') {
-      if (!req.file) return res.status(400).json({ success: false, message: 'No file' });
-
-      const results = [];
-      await new Promise((resolve, reject) => {
-        fs.createReadStream(req.file.path)
-          .pipe(csv())
-          .on('data', (row) => {
-            const prelim = parseFloat(row.PRELIM_GRADE) || 0;
-            const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
-            const final = parseFloat(row.FINAL_GRADE) || 0;
-            const gwa = (prelim + midterm + final) / 3;
-            
-            results.push({
-              ...row,
-              GWA: gwa.toFixed(2),
-              REMARK: midterm && final ? (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC'
-            });
-          })
-          .on('end', resolve)
-          .on('error', reject);
+    // Process CSV in memory
+    await new Promise((resolve, reject) => {
+      const parser = csv();
+      parser.on('data', (row) => {
+        const prelim = parseFloat(row.PRELIM_GRADE) || 0;
+        const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
+        const final = parseFloat(row.FINAL_GRADE) || 0;
+        const gwa = (prelim + midterm + final) / 3;
+        
+        results.push({
+          ...row,
+          GWA: gwa.toFixed(2),
+          REMARK: midterm && final ? (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC'
+        });
       });
+      
+      parser.on('end', resolve);
+      parser.on('error', reject);
+      
+      // Feed the buffer directly to the parser
+      const bufferStream = require('stream').Readable.from(fileContent);
+      bufferStream.pipe(parser);
+    });
 
-      for (const row of results) {
-        await promisePool.query(
-          'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
-          [row, row]
-        );
-      }
-
-      fs.unlinkSync(req.file.path);
-      return res.json({ success: true, count: results.length });
+    // Insert results into database
+    for (const row of results) {
+      await promisePool.query(
+        'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
+        [row, row]
+      );
     }
 
-    return res.status(405).json({ success: false, message: 'Method not allowed' });
+    return res.json({ success: true, count: results.length });
   } catch (error) {
     console.error('Grades error:', error);
-    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
 // ENDPOINT 3: Communication
-app.post('/api/communicate', async (req, res) => {
+router.post('/communicate', async (req, res) => {
   try {
     const { type, data } = req.body;
 
@@ -377,6 +345,14 @@ process.on('SIGINT', async () => {
   }
 });
 
-app.listen(5000, () => {
-  console.log('Server running on port 5000');
+// Mount all routes under /.netlify/functions/service-database
+app.use('/.netlify/functions/service-database', router);
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ success: false, message: 'Internal server error' });
 });
+
+// Export handler for Netlify Functions
+export const handler = serverless(app);
