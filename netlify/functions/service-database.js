@@ -8,8 +8,6 @@ import fs from 'fs';
 import nodemailer from 'nodemailer';
 
 const app = express();
-app.use(cors());
-app.use(express.json());
 
 // Configure CORS with multiple origins
 const allowedOrigins = [
