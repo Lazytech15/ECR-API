@@ -6,13 +6,6 @@ import multer from 'multer';
 import csv from 'csv-parser';
 import fs from 'fs';
 import nodemailer from 'nodemailer';
-import { WebSocketServer } from 'ws';
-import { createServer } from 'http';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const app = express();
 app.use(cors());
