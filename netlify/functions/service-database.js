@@ -17,7 +17,6 @@ const allowedOrigins = [
   'http://localhost:5500',
   'http://localhost:5173',
   'http://localhost:3000',
-  'https://mailer.cyberdyne.top',
   'https://ecr-api-connection-database.netlify.app'
 ];
 
@@ -113,7 +112,15 @@ router.post('/auth', async (req, res) => {
         break;
       case 'get-alldata':
         await handleGetAllData(data, res);
-        break;
+        case 'get-all-teachers':
+          await handleGetAllTeachers(data, res);
+          break;
+        case 'get-all-students':
+          await handleGetAllStudents(data, res);
+          break;
+        case 'delete-teacher':
+          await handleDeleteTeacher(data, res);
+          break;
       default:
         res.status(400).json({ success: false, message: 'Invalid action' });
     }
@@ -172,10 +179,54 @@ const handleLogin = async (data, res) => {
 };
 
 const handleRegister = async (data, res) => {
-  const { studentId, firstName, middleName, lastName, course, section, academic_term } = data;
   const fullName = middleName ? `${firstName} ${middleName} ${lastName}` : `${firstName} ${lastName}`;
   const username = generateUsername(firstName, lastName, studentId);
   const plainPassword = generatePassword();
+
+  if (data.teacherName) {
+    const { teacherName, email, password } = data;
+    
+    try {
+      // Check if teacher already exists
+      const [existing] = await promisePool.query(
+        'SELECT 1 FROM users WHERE email = ?',
+        [email]
+      );
+
+      if (existing.length > 0) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Email already registered' 
+        });
+      }
+
+      // Hash password and create teacher account
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const [result] = await promisePool.query(
+        'INSERT INTO users (teacher_name, email, password, role) VALUES (?, ?, ?, "teacher")',
+        [teacherName, email, hashedPassword]
+      );
+
+      res.json({ 
+        success: true, 
+        message: 'Teacher registered successfully',
+        teacher: {
+          id: result.insertId,
+          teacher_name: teacherName,
+          email: email
+        }
+      });
+    } catch (error) {
+      console.error('Error registering teacher:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Server error registering teacher' 
+      });
+    }
+    return;
+  }
+
+  const { studentId, firstName, middleName, lastName, course, section, academic_term } = data;
 
   // Check existing
   const [existing] = await promisePool.query(
@@ -310,6 +361,49 @@ const handleGetAllData = async (data, res) => {
     res.json({ success: true, student });
   } else {
     res.status(404).json({ success: false, message: 'Student not found' });
+  }
+};
+
+const handleGetAllTeachers = async (data, res) => {
+  try {
+    const [teachers] = await promisePool.query(
+      'SELECT id, teacher_name, email FROM users WHERE role = "teacher"'
+    );
+    res.json({ success: true, teachers });
+  } catch (error) {
+    console.error('Error fetching teachers:', error);
+    res.status(500).json({ success: false, message: 'Server error fetching teachers' });
+  }
+};
+
+const handleGetAllStudents = async (data, res) => {
+  try {
+    const [students] = await promisePool.query(
+      'SELECT id, student_id, full_name, email, course, section FROM students'
+    );
+    res.json({ success: true, students });
+  } catch (error) {
+    console.error('Error fetching students:', error);
+    res.status(500).json({ success: false, message: 'Server error fetching students' });
+  }
+};
+
+const handleDeleteTeacher = async (data, res) => {
+  const { teacherId } = data;
+  try {
+    const [result] = await promisePool.query(
+      'DELETE FROM users WHERE id = ? AND role = "teacher"',
+      [teacherId]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Teacher not found' });
+    }
+    
+    res.json({ success: true, message: 'Teacher deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting teacher:', error);
+    res.status(500).json({ success: false, message: 'Server error deleting teacher' });
   }
 };
 
