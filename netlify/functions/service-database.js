@@ -139,67 +139,119 @@ router.post('/auth', async (req, res) => {
 });
 
 const handleLogin = async (data, res) => {
-  const { email, password } = data;
-  const sanitizedInput = email.trim().toLowerCase();
+  const { loginInput, loginType, password } = data;
+  const sanitizedInput = loginInput.trim().toLowerCase();
+  
+  console.log('Login attempt:', { loginType, sanitizedInput });
 
-  // Check students
-  const [students] = await promisePool.query(
-    'SELECT * FROM students WHERE LOWER(username) = ? OR LOWER(email) = ?',
-    [sanitizedInput, sanitizedInput]
-  );
-
-  if (students.length > 0) {
-    const student = students[0];
-    const match = await bcrypt.compare(password, student.password);
-    if (match) {
-      return res.json({
-        success: true,
-        user: {
-          id: student.id,
-          email: student.email,
-          student_id: student.student_id,
-          name: student.full_name,
-          role: 'student'
-        }
-      });
+  try {
+    // 1. Check Students
+    let query = 'SELECT * FROM students WHERE ';
+    if (loginType === 'email') {
+      query += 'LOWER(email) = ?';
+    } else {
+      query += 'LOWER(username) = ?';
     }
-  }
 
-  // Check teachers
-  const [teachers] = await promisePool.query(
-    'SELECT * FROM teacher WHERE LOWER(username) = ? OR LOWER(personal_email) = ?',
-    [sanitizedInput, sanitizedInput]
-  );
+    const [students] = await promisePool.query(query, [sanitizedInput]);
+    console.log('Student check:', { found: students.length > 0 });
 
-  if (teachers.length > 0 && await bcrypt.compare(password, teachers[0].password)) {
-    return res.json({
-      success: true,
-      user: {
-        id: teachers[0].teacher_id,
-        email: teachers[0].personal_email,
-        name: teachers[0].teacher_name,
-        role: 'teacher'
+    if (students.length > 0) {
+      const student = students[0];
+      const passwordMatch = await bcrypt.compare(password, student.password);
+      
+      console.log('Student password check:', { matches: passwordMatch });
+
+      if (passwordMatch) {
+        return res.json({
+          success: true,
+          user: {
+            id: student.id,
+            email: student.email,
+            student_id: student.student_id,
+            name: student.full_name,
+            role: 'student'
+          }
+        });
       }
+    }
+
+    // 2. Check Teachers
+    query = 'SELECT * FROM teacher WHERE ';
+    if (loginType === 'email') {
+      query += 'LOWER(personal_email) = ?';
+    } else {
+      query += 'LOWER(username) = ?';
+    }
+
+    const [teachers] = await promisePool.query(query, [sanitizedInput]);
+    console.log('Teacher check:', { found: teachers.length > 0 });
+
+    if (teachers.length > 0) {
+      const teacher = teachers[0];
+      const passwordMatch = await bcrypt.compare(password, teacher.password);
+      
+      console.log('Teacher password check:', { matches: passwordMatch });
+
+      if (passwordMatch) {
+        return res.json({
+          success: true,
+          user: {
+            id: teacher.teacher_id,
+            email: teacher.personal_email,
+            name: teacher.teacher_name,
+            role: 'teacher'
+          }
+        });
+      }
+    }
+
+    // 3. Check Admin
+    query = 'SELECT * FROM admin WHERE LOWER(username) = ?';
+    const [admins] = await promisePool.query(query, [sanitizedInput]);
+    console.log('Admin check:', { found: admins.length > 0 });
+
+    if (admins.length > 0) {
+      const admin = admins[0];
+      const passwordMatch = await bcrypt.compare(password, admin.password);
+      
+      console.log('Admin password check:', { matches: passwordMatch });
+
+      if (passwordMatch) {
+        return res.json({
+          success: true,
+          user: {
+            username: admin.username,
+            role: 'admin'
+          }
+        });
+      }
+    }
+
+    // No matching user found or password incorrect
+    let errorMessage = 'Invalid credentials';
+    
+    // More specific error messages based on what we found
+    if (students.length > 0 || teachers.length > 0 || admins.length > 0) {
+      errorMessage = 'Incorrect password';
+    } else {
+      errorMessage = loginType === 'email' 
+        ? 'No account found with this email address'
+        : 'No account found with this username';
+    }
+
+    return res.status(401).json({
+      success: false,
+      message: errorMessage
+    });
+
+  } catch (error) {
+    console.error('Login error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'An error occurred during login'
     });
   }
-
-  // Check admin
-  const [admin] = await promisePool.query(
-    'SELECT * FROM admin WHERE LOWER(username) = ?',
-    [sanitizedInput]
-  );
-
-  if (admin.length > 0 && await bcrypt.compare(password, admin[0].password)) {
-    return res.json({
-      success: true,
-      user: {
-        username: admin[0].username,
-        role: 'admin'
-      }
-    });
-  }
-
-  res.status(401).json({ success: false, message: 'Invalid credentials' });
 };
 
 const handleRegister = async (data, res) => {
