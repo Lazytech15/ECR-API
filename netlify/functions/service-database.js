@@ -101,11 +101,17 @@ router.post('/auth', async (req, res) => {
       case 'register':
         await handleRegister(data, res);
         break;
+      case 'register-teacher':  // New action for teacher registration
+        await handleTeacherRegister(data, res);
+        break;
       case 'update':
         await handleUpdate(data, res);
         break;
       case 'delete-student':
         await handleDeleteStudent(data, res);
+        break;
+      case 'delete-teacher':   // Add teacher deletion
+        await handleDeleteTeacher(data, res);
         break;
       case 'delete-grade':
         await handleDeleteGrade(data, res);
@@ -224,6 +230,47 @@ const handleRegister = async (data, res) => {
   res.json({ success: true, credentials: { username, password: plainPassword } });
 };
 
+const handleTeacherRegister = async (data, res) => {
+  const { teacher_id, teacher_name, personal_email } = data;
+  const [firstName, ...lastNameParts] = teacher_name.split(' ');
+  const lastName = lastNameParts.join(' ');
+  
+  try {
+    // Check if teacher already exists
+    const [existing] = await promisePool.query(
+      'SELECT 1 FROM teacher WHERE teacher_id = ? OR personal_email = ?',
+      [teacher_id, personal_email]
+    );
+
+    if (existing.length > 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Teacher with this ID or email already exists' 
+      });
+    }
+
+    // Generate credentials
+    const username = generateUsername(firstName, lastName, teacher_id);
+    const password = generatePassword();
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Insert teacher
+    await promisePool.query(
+      'INSERT INTO teacher (teacher_id, teacher_name, personal_email, username, password) VALUES (?, ?, ?, ?, ?)',
+      [teacher_id, teacher_name, personal_email, username, hashedPassword]
+    );
+
+    res.json({
+      success: true,
+      message: 'Teacher registered successfully',
+      credentials: { username, password }
+    });
+  } catch (error) {
+    console.error('Error registering teacher:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
 const handleUpdate = async (data, res) => {
   const { studentId: updateId, currentPassword, newPassword, newSection, newTrimester, newEmail, newCourse } = data;
 
@@ -286,6 +333,26 @@ const handleDeleteStudent = async (data, res) => {
   });
 };
 
+const handleDeleteTeacher = async (data, res) => {
+  const { teacherId } = data;
+
+  try {
+    const [result] = await promisePool.query(
+      'DELETE FROM teacher WHERE teacher_id = ?',
+      [teacherId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Teacher not found' });
+    }
+
+    res.json({ success: true, message: 'Teacher deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting teacher:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
 const handleDeleteGrade = async (data, res) => {
   const { ecr_name: deleteEcrName } = data;
 
@@ -314,7 +381,6 @@ const handleDeleteGrade = async (data, res) => {
 
 const handleGetAllData = async (data, res) => {
   try {
-    // If studentId is provided, return specific student
     if (data.studentId) {
       const [studentData] = await promisePool.query(
         'SELECT * FROM students WHERE student_id = ?',
@@ -328,11 +394,19 @@ const handleGetAllData = async (data, res) => {
       }
     }
 
-    // Otherwise return all students for admin dashboard
+    // Get both students and teachers for admin dashboard
     const [students] = await promisePool.query(
       'SELECT student_id, full_name, course FROM students'
     );
-    res.json({ success: true, students });
+    const [teachers] = await promisePool.query(
+      'SELECT teacher_id, teacher_name, personal_email, username FROM teacher'
+    );
+
+    res.json({ 
+      success: true, 
+      students,
+      teachers
+    });
   } catch (error) {
     console.error('Error fetching data:', error);
     res.status(500).json({ success: false, message: 'Server error' });
