@@ -80,8 +80,18 @@ const transporter = nodemailer.createTransport({
 });
 
 // Helper Functions
-const generateUsername = (firstName, lastName, studentId) => {
+const generateStudent = (firstName, lastName, studentId) => {
   return `${firstName.toLowerCase().substring(0, 2)}${lastName.toLowerCase().substring(0, 2)}${studentId.slice(-4)}`;
+};
+
+const generateTeacher = (fullName, teacherId) => {
+  // Split the full name and take first and last parts
+  const nameParts = fullName.trim().split(' ');
+  const firstName = nameParts[0];
+  const lastName = nameParts[nameParts.length - 1];
+  
+  // Take first 2 letters of first name and last name, combine with last 4 digits of ID
+  return `${firstName.toLowerCase().substring(0, 2)}${lastName.toLowerCase().substring(0, 2)}${teacherId.slice(-4)}`;
 };
 
 const generatePassword = () => {
@@ -195,7 +205,7 @@ const handleLogin = async (data, res) => {
 const handleRegister = async (data, res) => {
   const { studentId, firstName, middleName, lastName, course, section, academic_term } = data;
   const fullName = middleName ? `${firstName} ${middleName} ${lastName}` : `${firstName} ${lastName}`;
-  const username = generateUsername(firstName, lastName, studentId);
+  const username = generateStudent(firstName, lastName, studentId);
   const plainPassword = generatePassword();
 
   // Check existing
@@ -232,8 +242,6 @@ const handleRegister = async (data, res) => {
 
 const handleTeacherRegister = async (data, res) => {
   const { teacher_id, teacher_name, personal_email } = data;
-  const [firstName, ...lastNameParts] = teacher_name.split(' ');
-  const lastName = lastNameParts.join(' ');
   
   try {
     // Check if teacher already exists
@@ -249,8 +257,8 @@ const handleTeacherRegister = async (data, res) => {
       });
     }
 
-    // Generate credentials
-    const username = generateUsername(firstName, lastName, teacher_id);
+    // Generate credentials using the updated function
+    const username = generateTeacher(teacher_name, teacher_id);
     const password = generatePassword();
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -396,10 +404,10 @@ const handleGetAllData = async (data, res) => {
 
     // Get both students and teachers for admin dashboard
     const [students] = await promisePool.query(
-      'SELECT student_id, full_name, course FROM students'
+      'SELECT student_id, full_name, password, course FROM students'
     );
     const [teachers] = await promisePool.query(
-      'SELECT teacher_id, teacher_name, personal_email, username FROM teacher'
+      'SELECT teacher_id, teacher_name, personal_email, password, username FROM teacher'
     );
 
     res.json({ 
