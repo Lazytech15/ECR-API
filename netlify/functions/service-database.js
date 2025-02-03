@@ -405,7 +405,7 @@ const handleGetAllData = async (data, res) => {
 const handleGetTeachers = async (data, res) => {
   try {
     const [teachers] = await promisePool.query(
-      'SELECT teacher_id, teacher_name, personal_email, username FROM teacher'
+      'SELECT teacher_id, teacher_name, personal_email, password, username FROM teacher'
     );
     res.json({ success: true, teachers });
   } catch (error) {
