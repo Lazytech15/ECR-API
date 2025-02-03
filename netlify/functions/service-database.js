@@ -135,64 +135,83 @@ const handleLogin = async (data, res) => {
   const { email, password } = data;
   const sanitizedInput = email.trim().toLowerCase();
 
-  // Check students
-  const [students] = await promisePool.query(
-    'SELECT * FROM students WHERE LOWER(username) = ? OR LOWER(email) = ?',
-    [sanitizedInput, sanitizedInput]
-  );
+  try {
+    // First check if it's a teacher login
+    const [teachers] = await promisePool.query(
+      'SELECT * FROM teacher WHERE LOWER(username) = ? OR LOWER(personal_email) = ?',
+      [sanitizedInput, sanitizedInput]
+    );
 
-  if (students.length > 0) {
-    const student = students[0];
-    const match = await bcrypt.compare(password, student.password);
-    if (match) {
-      return res.json({
-        success: true,
-        user: {
-          id: student.id,
-          email: student.email,
-          student_id: student.student_id,
-          name: student.full_name,
-          role: 'student'
-        }
-      });
+    if (teachers.length > 0) {
+      const teacher = teachers[0];
+      const match = await bcrypt.compare(password, teacher.password);
+      if (match) {
+        return res.json({
+          success: true,
+          user: {
+            id: teacher.teacher_id,
+            email: teacher.personal_email,
+            name: teacher.teacher_name,
+            role: 'teacher'
+          }
+        });
+      }
     }
-  }
 
-  // Check teachers
-  const [teachers] = await promisePool.query(
-    'SELECT * FROM teacher WHERE LOWER(username) = ? OR LOWER(personal_email) = ?',
-    [sanitizedInput, sanitizedInput]
-  );
-  
-  if (teachers.length > 0 && await bcrypt.compare(password, teachers[0].password)) {
-    return res.json({
-      success: true,
-      user: {
-        id: teachers[0].teacher_id,
-        email: teachers[0].personal_email,
-        name: teachers[0].teacher_name,
-        role: 'teacher'
+    // Then check if it's a student login
+    const [students] = await promisePool.query(
+      'SELECT * FROM students WHERE LOWER(username) = ? OR LOWER(email) = ?',
+      [sanitizedInput, sanitizedInput]
+    );
+
+    if (students.length > 0) {
+      const student = students[0];
+      const match = await bcrypt.compare(password, student.password);
+      if (match) {
+        return res.json({
+          success: true,
+          user: {
+            id: student.student_id,
+            email: student.email,
+            name: student.full_name,
+            role: 'student'
+          }
+        });
       }
+    }
+
+    // Finally check if it's an admin login
+    const [admin] = await promisePool.query(
+      'SELECT * FROM admin WHERE LOWER(username) = ?',
+      [sanitizedInput]
+    );
+
+    if (admin.length > 0) {
+      const match = await bcrypt.compare(password, admin[0].password);
+      if (match) {
+        return res.json({
+          success: true,
+          user: {
+            username: admin[0].username,
+            role: 'admin'
+          }
+        });
+      }
+    }
+
+    // If we get here, no valid user was found
+    res.status(401).json({ 
+      success: false, 
+      message: 'Invalid credentials'
+    });
+
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error during login'
     });
   }
-
-  // Check admin
-  const [admin] = await promisePool.query(
-    'SELECT * FROM admin WHERE LOWER(username) = ?',
-    [sanitizedInput]
-  );
-
-  if (admin.length > 0 && await bcrypt.compare(password, admin[0].password)) {
-    return res.json({
-      success: true,
-      user: {
-        username: admin[0].username,
-        role: 'admin'
-      }
-    });
-  }
-
-  res.status(401).json({ success: false, message: 'Invalid credentials' });
 };
 
 // In the backend service - Modified handleRegister function
@@ -205,6 +224,15 @@ const handleRegister = async (data, res) => {
   // Determine if registering a teacher or student
   const isTeacher = course === 'FACULTY';
   const tableName = isTeacher ? 'teacher' : 'students';
+
+    // Log registration details (remove in production)
+    console.log('Registration details:', {
+      isTeacher,
+      username,
+      plainPassword,
+      email: isTeacher ? 'personal_email' : 'email',
+      tableName: isTeacher ? 'teacher' : 'students'
+    });
   
   // Check existing
   const [existing] = await promisePool.query(
@@ -249,6 +277,12 @@ const handleRegister = async (data, res) => {
       }
     );
   }
+
+    // Before sending response, log the credentials
+    console.log('Generated credentials:', {
+      username,
+      password: plainPassword
+    });
 
   res.json({ success: true, credentials: { username, password: plainPassword } });
 };
