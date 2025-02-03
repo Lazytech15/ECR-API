@@ -116,9 +116,9 @@ router.post('/auth', async (req, res) => {
       case 'get-teachers':
         await handleGetTeachers(data, res);
         break;
-      case 'add-teacher':
-        await handleAddTeacher(data, res);
-        break;
+      // case 'add-teacher':
+      //   await handleAddTeacher(data, res);
+      //   break;
       case 'delete-teacher':
         await handleDeleteTeacher(data, res);
         break;
@@ -195,40 +195,60 @@ const handleLogin = async (data, res) => {
   res.status(401).json({ success: false, message: 'Invalid credentials' });
 };
 
+// In the backend service - Modified handleRegister function
 const handleRegister = async (data, res) => {
-  const { studentId, firstName, middleName, lastName, course, section, academic_term } = data;
-  const fullName = middleName ? `${firstName} ${middleName} ${lastName}` : `${firstName} ${lastName}`;
+  const { studentId, firstName, lastName, course, section, academic_term, email } = data;
+  const fullName = `${firstName} ${lastName}`;
   const username = generateUsername(firstName, lastName, studentId);
   const plainPassword = generatePassword();
-
+  
+  // Determine if registering a teacher or student
+  const isTeacher = course === 'FACULTY';
+  const tableName = isTeacher ? 'teacher' : 'students';
+  
   // Check existing
   const [existing] = await promisePool.query(
+    isTeacher ?
+    'SELECT 1 FROM teacher WHERE teacher_id = ? OR personal_email = ?' :
     'SELECT 1 FROM students WHERE student_id = ? OR email = ?',
-    [studentId, data.email]
+    [studentId, email]
   );
 
   if (existing.length > 0) {
     return res.status(400).json({ success: false, message: 'Already registered' });
   }
 
-  // Create new student
+  // Create new user
   const hashedPassword = await bcrypt.hash(plainPassword, 10);
-  await promisePool.query(
-    'INSERT INTO students SET ?',
-    {
-      student_id: studentId,
-      first_name: firstName,
-      middle_name: middleName,
-      last_name: lastName,
-      full_name: fullName,
-      course,
-      section,
-      trimester: academic_term,
-      email: data.email,
-      username,
-      password: hashedPassword
-    }
-  );
+  
+  if (isTeacher) {
+    await promisePool.query(
+      'INSERT INTO teacher SET ?',
+      {
+        teacher_id: studentId,
+        teacher_name: fullName,
+        personal_email: email,
+        username,
+        password: hashedPassword
+      }
+    );
+  } else {
+    await promisePool.query(
+      'INSERT INTO students SET ?',
+      {
+        student_id: studentId,
+        first_name: firstName,
+        last_name: lastName,
+        full_name: fullName,
+        course,
+        section,
+        trimester: academic_term,
+        email,
+        username,
+        password: hashedPassword
+      }
+    );
+  }
 
   res.json({ success: true, credentials: { username, password: plainPassword } });
 };
@@ -360,36 +380,36 @@ const handleGetTeachers = async (data, res) => {
   }
 };
 
-const handleAddTeacher = async (data, res) => {
-  try {
-    const { teacher_id, teacher_name, personal_email, username, password } = data;
+// const handleAddTeacher = async (data, res) => {
+//   try {
+//     const { teacher_id, teacher_name, personal_email, username, password } = data;
     
-    // Check if teacher already exists
-    const [existing] = await promisePool.query(
-      'SELECT 1 FROM teacher WHERE teacher_id = ? OR personal_email = ? OR username = ?',
-      [teacher_id, personal_email, username]
-    );
+//     // Check if teacher already exists
+//     const [existing] = await promisePool.query(
+//       'SELECT 1 FROM teacher WHERE teacher_id = ? OR personal_email = ? OR username = ?',
+//       [teacher_id, personal_email, username]
+//     );
 
-    if (existing.length > 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Teacher with this ID, email, or username already exists' 
-      });
-    }
+//     if (existing.length > 0) {
+//       return res.status(400).json({ 
+//         success: false, 
+//         message: 'Teacher with this ID, email, or username already exists' 
+//       });
+//     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+//     const hashedPassword = await bcrypt.hash(password, 10);
     
-    await promisePool.query(
-      'INSERT INTO teacher (teacher_id, teacher_name, personal_email, username, password) VALUES (?, ?, ?, ?, ?)',
-      [teacher_id, teacher_name, personal_email, username, hashedPassword]
-    );
+//     await promisePool.query(
+//       'INSERT INTO teacher (teacher_id, teacher_name, personal_email, username, password) VALUES (?, ?, ?, ?, ?)',
+//       [teacher_id, teacher_name, personal_email, username, hashedPassword]
+//     );
 
-    res.json({ success: true, message: 'Teacher added successfully' });
-  } catch (error) {
-    console.error('Error adding teacher:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-};
+//     res.json({ success: true, message: 'Teacher added successfully' });
+//   } catch (error) {
+//     console.error('Error adding teacher:', error);
+//     res.status(500).json({ success: false, message: 'Server error' });
+//   }
+// };
 
 const handleDeleteTeacher = async (data, res) => {
   try {
