@@ -190,9 +190,10 @@ const handleLogin = async (data, res) => {
     if (teachers.length > 0) {
       const teacher = teachers[0];
       const passwordMatch = await bcrypt.compare(password, teacher.password);
-      
+      console.log('Stored hashed password:', teacher.password);
+      console.log('Attempting to match with provided password:', password);
       console.log('Teacher password check:', { matches: passwordMatch });
-
+      console.log('Password match result:', passwordMatch);
       if (passwordMatch) {
         return res.json({
           success: true,
@@ -313,6 +314,9 @@ const handleTeacherRegister = async (data, res) => {
     const username = generateTeacher(teacher_name, teacher_id);
     const password = generatePassword();
     const hashedPassword = await bcrypt.hash(password, 10);
+
+    console.log('Hashed password:', hashedPassword);
+    console.log('Generated password:', password);
 
     // Insert teacher
     await promisePool.query(
