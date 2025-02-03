@@ -157,8 +157,8 @@ const handleLogin = async (data, res) => {
 
   // Check teachers
   const [teachers] = await promisePool.query(
-    'SELECT * FROM teacher WHERE LOWER(personal_email) = ? OR LOWER(username) = ?',
-    // [sanitizedInput, sanitizedInput]
+    'SELECT * FROM teacher WHERE LOWER(username) = ? OR LOWER(personal_email) = ?',
+    [sanitizedInput, sanitizedInput]
   );
 
   if (teachers.length > 0 && await bcrypt.compare(password, teachers[0].password)) {
