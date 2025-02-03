@@ -113,6 +113,15 @@ router.post('/auth', async (req, res) => {
       case 'get-alldata':
         await handleGetAllData(data, res);
         break;
+      case 'get-teachers':
+        await handleGetTeachers(data, res);
+        break;
+      case 'add-teacher':
+        await handleAddTeacher(data, res);
+        break;
+      case 'delete-teacher':
+        await handleDeleteTeacher(data, res);
+        break;
       default:
         res.status(400).json({ success: false, message: 'Invalid action' });
     }
@@ -339,6 +348,69 @@ const handleGetAllData = async (data, res) => {
   }
 };
 
+const handleGetTeachers = async (data, res) => {
+  try {
+    const [teachers] = await promisePool.query(
+      'SELECT teacher_id, teacher_name, personal_email, username FROM teacher'
+    );
+    res.json({ success: true, teachers });
+  } catch (error) {
+    console.error('Error fetching teachers:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+const handleAddTeacher = async (data, res) => {
+  try {
+    const { teacher_id, teacher_name, personal_email, username, password } = data;
+    
+    // Check if teacher already exists
+    const [existing] = await promisePool.query(
+      'SELECT 1 FROM teacher WHERE teacher_id = ? OR personal_email = ? OR username = ?',
+      [teacher_id, personal_email, username]
+    );
+
+    if (existing.length > 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Teacher with this ID, email, or username already exists' 
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    await promisePool.query(
+      'INSERT INTO teacher (teacher_id, teacher_name, personal_email, username, password) VALUES (?, ?, ?, ?, ?)',
+      [teacher_id, teacher_name, personal_email, username, hashedPassword]
+    );
+
+    res.json({ success: true, message: 'Teacher added successfully' });
+  } catch (error) {
+    console.error('Error adding teacher:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+const handleDeleteTeacher = async (data, res) => {
+  try {
+    const { teacherId } = data;
+    
+    const [result] = await promisePool.query(
+      'DELETE FROM teacher WHERE teacher_id = ?',
+      [teacherId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Teacher not found' });
+    }
+
+    res.json({ success: true, message: 'Teacher deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting teacher:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
 // ENDPOINT 2: Grades Management
 router.all('/grades', upload.single('file'), async (req, res) => {
   try {
@@ -480,70 +552,6 @@ router.post('/communicate', async (req, res) => {
     }
   } catch (error) {
     console.error('Communication error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-// ENDPOINT 4: File Upload
-router.get('/teachers', async (req, res) => {
-  try {
-    const [teachers] = await promisePool.query(
-      'SELECT teacher_id, teacher_name, personal_email, username FROM teacher'
-    );
-    res.json({ success: true, teachers });
-  } catch (error) {
-    console.error('Error fetching teachers:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-router.post('/teachers', async (req, res) => {
-  try {
-    const { teacher_id, teacher_name, personal_email, username, password } = req.body;
-    
-    // Check if teacher already exists
-    const [existing] = await promisePool.query(
-      'SELECT 1 FROM teacher WHERE teacher_id = ? OR personal_email = ? OR username = ?',
-      [teacher_id, personal_email, username]
-    );
-
-    if (existing.length > 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Teacher with this ID, email, or username already exists' 
-      });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    
-    await promisePool.query(
-      'INSERT INTO teacher (teacher_id, teacher_name, personal_email, username, password) VALUES (?, ?, ?, ?, ?)',
-      [teacher_id, teacher_name, personal_email, username, hashedPassword]
-    );
-
-    res.json({ success: true, message: 'Teacher added successfully' });
-  } catch (error) {
-    console.error('Error adding teacher:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-router.delete('/teachers/:teacherId', async (req, res) => {
-  try {
-    const { teacherId } = req.params;
-    
-    const [result] = await promisePool.query(
-      'DELETE FROM teacher WHERE teacher_id = ?',
-      [teacherId]
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: 'Teacher not found' });
-    }
-
-    res.json({ success: true, message: 'Teacher deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting teacher:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
