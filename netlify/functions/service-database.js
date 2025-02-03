@@ -446,6 +446,7 @@ const handleDeleteGrade = async (data, res) => {
 
 const handleGetAllData = async (data, res) => {
   try {
+    // If studentId is provided, return specific student data
     if (data.studentId) {
       const [studentData] = await promisePool.query(
         'SELECT * FROM students WHERE student_id = ?',
@@ -459,18 +460,39 @@ const handleGetAllData = async (data, res) => {
       }
     }
 
-    // Get both students and teachers for admin dashboard
+    // Get students, teachers, and grades data for admin dashboard
     const [students] = await promisePool.query(
       'SELECT student_id, full_name, password, course FROM students'
     );
+    
     const [teachers] = await promisePool.query(
       'SELECT teacher_id, teacher_name, personal_email, password, username FROM teacher'
     );
+    
+    const [grades] = await promisePool.query(
+      'SELECT * FROM grades'
+    );
 
+    // If specific data type is requested
+    if (data.dataType) {
+      switch (data.dataType) {
+        case 'students':
+          return res.json({ success: true, students });
+        case 'teachers':
+          return res.json({ success: true, teachers });
+        case 'grades':
+          return res.json({ success: true, grades });
+        default:
+          return res.status(400).json({ success: false, message: 'Invalid data type requested' });
+      }
+    }
+
+    // Return all data if no specific type is requested
     res.json({ 
       success: true, 
       students,
-      teachers
+      teachers,
+      grades
     });
   } catch (error) {
     console.error('Error fetching data:', error);
