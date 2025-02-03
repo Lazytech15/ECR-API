@@ -113,15 +113,6 @@ router.post('/auth', async (req, res) => {
       case 'get-alldata':
         await handleGetAllData(data, res);
         break;
-      case 'get-teachers':
-        await handleGetTeachers(data, res);
-        break;
-      // case 'add-teacher':
-      //   await handleAddTeacher(data, res);
-      //   break;
-      case 'delete-teacher':
-        await handleDeleteTeacher(data, res);
-        break;
       default:
         res.status(400).json({ success: false, message: 'Invalid action' });
     }
@@ -135,154 +126,100 @@ const handleLogin = async (data, res) => {
   const { email, password } = data;
   const sanitizedInput = email.trim().toLowerCase();
 
-  try {
-    // First check if it's a teacher login
-    const [teachers] = await promisePool.query(
-      'SELECT * FROM teacher WHERE LOWER(username) = ? OR LOWER(personal_email) = ?',
-      [sanitizedInput, sanitizedInput]
-    );
+  // Check students
+  const [students] = await promisePool.query(
+    'SELECT * FROM students WHERE LOWER(username) = ? OR LOWER(email) = ?',
+    [sanitizedInput, sanitizedInput]
+  );
 
-    if (teachers.length > 0) {
-      const teacher = teachers[0];
-      const match = await bcrypt.compare(password, teacher.password);
-      if (match) {
-        return res.json({
-          success: true,
-          user: {
-            id: teacher.teacher_id,
-            email: teacher.personal_email,
-            name: teacher.teacher_name,
-            role: 'teacher'
-          }
-        });
-      }
+  if (students.length > 0) {
+    const student = students[0];
+    const match = await bcrypt.compare(password, student.password);
+    if (match) {
+      return res.json({
+        success: true,
+        user: {
+          id: student.id,
+          email: student.email,
+          student_id: student.student_id,
+          name: student.full_name,
+          role: 'student'
+        }
+      });
     }
+  }
 
-    // Then check if it's a student login
-    const [students] = await promisePool.query(
-      'SELECT * FROM students WHERE LOWER(username) = ? OR LOWER(email) = ?',
-      [sanitizedInput, sanitizedInput]
-    );
+  // Check teachers
+  const [teachers] = await promisePool.query(
+    'SELECT * FROM teacher WHERE LOWER(personal_email) = ? OR LOWER(username) = ?',
+    [sanitizedInput, sanitizedInput]
+  );
 
-    if (students.length > 0) {
-      const student = students[0];
-      const match = await bcrypt.compare(password, student.password);
-      if (match) {
-        return res.json({
-          success: true,
-          user: {
-            id: student.student_id,
-            email: student.email,
-            name: student.full_name,
-            role: 'student'
-          }
-        });
+  if (teachers.length > 0 && await bcrypt.compare(password, teachers[0].password)) {
+    return res.json({
+      success: true,
+      user: {
+        id: teachers[0].teacher_id,
+        email: teachers[0].personal_email,
+        name: teachers[0].teacher_name,
+        role: 'teacher'
       }
-    }
-
-    // Finally check if it's an admin login
-    const [admin] = await promisePool.query(
-      'SELECT * FROM admin WHERE LOWER(username) = ?',
-      [sanitizedInput]
-    );
-
-    if (admin.length > 0) {
-      const match = await bcrypt.compare(password, admin[0].password);
-      if (match) {
-        return res.json({
-          success: true,
-          user: {
-            username: admin[0].username,
-            role: 'admin'
-          }
-        });
-      }
-    }
-
-    // If we get here, no valid user was found
-    res.status(401).json({ 
-      success: false, 
-      message: 'Invalid credentials'
-    });
-
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error during login'
     });
   }
+
+  // Check admin
+  const [admin] = await promisePool.query(
+    'SELECT * FROM admin WHERE LOWER(username) = ?',
+    [sanitizedInput]
+  );
+
+  if (admin.length > 0 && await bcrypt.compare(password, admin[0].password)) {
+    return res.json({
+      success: true,
+      user: {
+        username: admin[0].username,
+        role: 'admin'
+      }
+    });
+  }
+
+  res.status(401).json({ success: false, message: 'Invalid credentials' });
 };
 
-// In the backend service - Modified handleRegister function
 const handleRegister = async (data, res) => {
-  const { studentId, firstName, lastName, course, section, academic_term, email } = data;
-  const fullName = `${firstName} ${lastName}`;
+  const { studentId, firstName, middleName, lastName, course, section, academic_term } = data;
+  const fullName = middleName ? `${firstName} ${middleName} ${lastName}` : `${firstName} ${lastName}`;
   const username = generateUsername(firstName, lastName, studentId);
   const plainPassword = generatePassword();
-  
-  // Determine if registering a teacher or student
-  const isTeacher = course === 'FACULTY';
-  const tableName = isTeacher ? 'teacher' : 'students';
 
-    // Log registration details (remove in production)
-    console.log('Registration details:', {
-      isTeacher,
-      username,
-      plainPassword,
-      email: isTeacher ? 'personal_email' : 'email',
-      tableName: isTeacher ? 'teacher' : 'students'
-    });
-  
   // Check existing
   const [existing] = await promisePool.query(
-    isTeacher ?
-    'SELECT 1 FROM teacher WHERE teacher_id = ? OR personal_email = ?' :
     'SELECT 1 FROM students WHERE student_id = ? OR email = ?',
-    [studentId, email]
+    [studentId, data.email]
   );
 
   if (existing.length > 0) {
     return res.status(400).json({ success: false, message: 'Already registered' });
   }
 
-  // Create new user
+  // Create new student
   const hashedPassword = await bcrypt.hash(plainPassword, 10);
-  
-  if (isTeacher) {
-    await promisePool.query(
-      'INSERT INTO teacher SET ?',
-      {
-        teacher_id: studentId,
-        teacher_name: fullName,
-        personal_email: email,
-        username,
-        password: hashedPassword
-      }
-    );
-  } else {
-    await promisePool.query(
-      'INSERT INTO students SET ?',
-      {
-        student_id: studentId,
-        first_name: firstName,
-        last_name: lastName,
-        full_name: fullName,
-        course,
-        section,
-        trimester: academic_term,
-        email,
-        username,
-        password: hashedPassword
-      }
-    );
-  }
-
-    // Before sending response, log the credentials
-    console.log('Generated credentials:', {
+  await promisePool.query(
+    'INSERT INTO students SET ?',
+    {
+      student_id: studentId,
+      first_name: firstName,
+      middle_name: middleName,
+      last_name: lastName,
+      full_name: fullName,
+      course,
+      section,
+      trimester: academic_term,
+      email: data.email,
       username,
-      password: plainPassword
-    });
+      password: hashedPassword
+    }
+  );
 
   res.json({ success: true, credentials: { username, password: plainPassword } });
 };
@@ -390,7 +327,7 @@ const handleGetAllData = async (data, res) => {
         return res.status(404).json({ success: false, message: 'Student not found' });
       }
     }
-    
+
     // Otherwise return all students for admin dashboard
     const [students] = await promisePool.query(
       'SELECT student_id, full_name, course FROM students'
@@ -398,69 +335,6 @@ const handleGetAllData = async (data, res) => {
     res.json({ success: true, students });
   } catch (error) {
     console.error('Error fetching data:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-};
-
-const handleGetTeachers = async (data, res) => {
-  try {
-    const [teachers] = await promisePool.query(
-      'SELECT teacher_id, teacher_name, personal_email, password, username FROM teacher'
-    );
-    res.json({ success: true, teachers });
-  } catch (error) {
-    console.error('Error fetching teachers:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-};
-
-// const handleAddTeacher = async (data, res) => {
-//   try {
-//     const { teacher_id, teacher_name, personal_email, username, password } = data;
-    
-//     // Check if teacher already exists
-//     const [existing] = await promisePool.query(
-//       'SELECT 1 FROM teacher WHERE teacher_id = ? OR personal_email = ? OR username = ?',
-//       [teacher_id, personal_email, username]
-//     );
-
-//     if (existing.length > 0) {
-//       return res.status(400).json({ 
-//         success: false, 
-//         message: 'Teacher with this ID, email, or username already exists' 
-//       });
-//     }
-
-//     const hashedPassword = await bcrypt.hash(password, 10);
-    
-//     await promisePool.query(
-//       'INSERT INTO teacher (teacher_id, teacher_name, personal_email, username, password) VALUES (?, ?, ?, ?, ?)',
-//       [teacher_id, teacher_name, personal_email, username, hashedPassword]
-//     );
-
-//     res.json({ success: true, message: 'Teacher added successfully' });
-//   } catch (error) {
-//     console.error('Error adding teacher:', error);
-//     res.status(500).json({ success: false, message: 'Server error' });
-//   }
-// };
-
-const handleDeleteTeacher = async (data, res) => {
-  try {
-    const { teacherId } = data;
-    
-    const [result] = await promisePool.query(
-      'DELETE FROM teacher WHERE teacher_id = ?',
-      [teacherId]
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: 'Teacher not found' });
-    }
-
-    res.json({ success: true, message: 'Teacher deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting teacher:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };
@@ -606,6 +480,70 @@ router.post('/communicate', async (req, res) => {
     }
   } catch (error) {
     console.error('Communication error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// ENDPOINT 4: File Upload
+router.get('/teachers', async (req, res) => {
+  try {
+    const [teachers] = await promisePool.query(
+      'SELECT teacher_id, teacher_name, personal_email, username FROM teacher'
+    );
+    res.json({ success: true, teachers });
+  } catch (error) {
+    console.error('Error fetching teachers:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+router.post('/teachers', async (req, res) => {
+  try {
+    const { teacher_id, teacher_name, personal_email, username, password } = req.body;
+
+    // Check if teacher already exists
+    const [existing] = await promisePool.query(
+      'SELECT 1 FROM teacher WHERE teacher_id = ? OR personal_email = ? OR username = ?',
+      [teacher_id, personal_email, username]
+    );
+
+    if (existing.length > 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Teacher with this ID, email, or username already exists' 
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    await promisePool.query(
+      'INSERT INTO teacher (teacher_id, teacher_name, personal_email, username, password) VALUES (?, ?, ?, ?, ?)',
+      [teacher_id, teacher_name, personal_email, username, hashedPassword]
+    );
+
+    res.json({ success: true, message: 'Teacher added successfully' });
+  } catch (error) {
+    console.error('Error adding teacher:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+router.delete('/teachers/:teacherId', async (req, res) => {
+  try {
+    const { teacherId } = req.params;
+
+    const [result] = await promisePool.query(
+      'DELETE FROM teacher WHERE teacher_id = ?',
+      [teacherId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Teacher not found' });
+    }
+
+    res.json({ success: true, message: 'Teacher deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting teacher:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
