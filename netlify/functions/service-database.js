@@ -10,7 +10,7 @@ import multer from 'multer';
 const app = express();
 const router = express.Router();
 
-// Updated CORS configuration
+// Configure CORS
 const allowedOrigins = [
   'http://127.0.0.1:5500',
   'http://127.0.0.1:5173',
@@ -21,44 +21,22 @@ const allowedOrigins = [
   'https://ecr-api-connection-database.netlify.app'
 ];
 
-// Updated CORS options
-app.use(cors({
+const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
     }
   },
-  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
   maxAge: 86400
-}));
+};
 
-// Pre-flight requests
-app.options('*', cors());
-
-// Enable JSON parsing before routes
+app.use(cors(corsOptions));
 app.use(express.json());
-
-// Add CORS headers middleware
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  res.header('Access-Control-Allow-Credentials', true);
-  
-  // Handle preflight requests
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  next();
-});
 
 // Configure multer to use memory storage instead of disk storage
 const upload = multer({
@@ -112,7 +90,7 @@ const generateTeacher = (fullName, teacherId) => {
   const nameParts = fullName.trim().split(' ');
   const firstName = nameParts[0];
   const lastName = nameParts[nameParts.length - 1];
-  
+
   // Take first 2 letters of first name and last name, combine with last 4 digits of ID
   return `${firstName.toLowerCase().substring(0, 2)}${lastName.toLowerCase().substring(0, 2)}${teacherId.slice(-4)}`;
 };
@@ -164,7 +142,7 @@ router.post('/auth', async (req, res) => {
 const handleLogin = async (data, res) => {
   const { loginInput, loginType, password } = data;
   const sanitizedInput = loginInput.trim().toLowerCase();
-  
+
   console.log('Login attempt:', { loginType, sanitizedInput });
 
   try {
@@ -182,7 +160,7 @@ const handleLogin = async (data, res) => {
     if (students.length > 0) {
       const student = students[0];
       const passwordMatch = await bcrypt.compare(password, student.password);
-      
+
       console.log('Student password check:', { matches: passwordMatch });
 
       if (passwordMatch) {
@@ -238,7 +216,7 @@ const handleLogin = async (data, res) => {
     if (admins.length > 0) {
       const admin = admins[0];
       const passwordMatch = await bcrypt.compare(password, admin.password);
-      
+
       console.log('Admin password check:', { matches: passwordMatch });
 
       if (passwordMatch) {
@@ -254,7 +232,7 @@ const handleLogin = async (data, res) => {
 
     // No matching user found or password incorrect
     let errorMessage = 'Invalid credentials';
-    
+
     // More specific error messages based on what we found
     if (students.length > 0 || teachers.length > 0 || admins.length > 0) {
       errorMessage = 'Incorrect password';
@@ -318,7 +296,7 @@ const handleRegister = async (data, res) => {
 
 const handleTeacherRegister = async (data, res) => {
   const { teacher_id, teacher_name, personal_email } = data;
-  
+
   try {
     // Check if teacher already exists
     const [existing] = await promisePool.query(
@@ -524,11 +502,8 @@ const handleGetAllData = async (data, res) => {
 
 // ENDPOINT 2: Grades Management
 router.all('/grades', upload.single('file'), async (req, res) => {
-  // Set increased timeout for large requests
-  req.setTimeout(300000); // 5 minutes
-  res.setTimeout(300000); // 5 minutes
-
   try {
+    // Get table schema information
     const [columns] = await promisePool.query(`
       SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY
       FROM INFORMATION_SCHEMA.COLUMNS 
@@ -537,10 +512,19 @@ router.all('/grades', upload.single('file'), async (req, res) => {
       ORDER BY ORDINAL_POSITION;
     `);
 
+    // Log table structure for debugging
+    console.log('Table Structure:', columns.map(col => ({
+      name: col.COLUMN_NAME,
+      type: col.DATA_TYPE,
+      nullable: col.IS_NULLABLE,
+      key: col.COLUMN_KEY
+    })));
+
+    // GET: Fetch grades
     if (req.method === 'GET') {
       await handleGetGrades(req, res, columns);
     } else if (req.method === 'POST') {
-      await handleBulkPostGrades(req, res, columns);
+      await handlePostGrades(req, res, columns);
     } else {
       res.status(405).json({ success: false, message: 'Method not allowed' });
     }
@@ -554,100 +538,83 @@ router.all('/grades', upload.single('file'), async (req, res) => {
   }
 });
 
-// New optimized bulk insert function
-const handleBulkPostGrades = async (req, res, columns) => {
-  if (!req.file) {
-    return res.status(400).json({ success: false, message: 'No file uploaded' });
+const handleGetGrades = async (req, res, columns) => {
+  const { teacherId, studentId } = req.query;
+
+  if (req.query.schema === 'true') {
+    return res.json({
+      success: true,
+      columns: columns.map(col => ({
+        name: col.COLUMN_NAME,
+        type: col.DATA_TYPE,
+        nullable: col.IS_NULLABLE,
+        key: col.COLUMN_KEY
+      }))
+    });
   }
+
+  const query = teacherId ?
+    'SELECT * FROM grades WHERE faculty_id = ?' :
+    'SELECT * FROM grades WHERE student_num = ?';
+
+  const [grades] = await promisePool.query(query, [teacherId || studentId]);
+  res.json({ success: true, grades });
+};
+
+const handlePostGrades = async (req, res, columns) => {
+  if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
 
   const results = [];
   const columnNames = columns.map(col => col.COLUMN_NAME.toLowerCase());
-  const batchSize = 100; // Process 100 records at a time
-  let batch = [];
 
+  // Create a readable stream from the buffer
   const bufferStream = new require('stream').Readable();
   bufferStream.push(req.file.buffer);
   bufferStream.push(null);
 
-  try {
-    await new Promise((resolve, reject) => {
-      bufferStream
-        .pipe(csv())
-        .on('data', (row) => {
-          const transformedRow = processRow(row, columnNames);
-          batch.push(transformedRow);
-
-          // When batch is full, process it
-          if (batch.length >= batchSize) {
-            processBatch(batch).catch(reject);
-            results.push(...batch);
-            batch = [];
+  await new Promise((resolve, reject) => {
+    bufferStream
+      .pipe(csv())
+      .on('data', (row) => {
+        // Transform row keys to match database column names
+        const transformedRow = {};
+        Object.entries(row).forEach(([key, value]) => {
+          const normalizedKey = key.toLowerCase();
+          if (columnNames.includes(normalizedKey)) {
+            transformedRow[normalizedKey] = value;
           }
-        })
-        .on('end', async () => {
-          // Process remaining records
-          if (batch.length > 0) {
-            await processBatch(batch);
-            results.push(...batch);
-          }
-          resolve();
-        })
-        .on('error', reject);
-    });
+        });
 
-    res.json({
-      success: true,
-      count: results.length,
-      message: `Successfully processed ${results.length} records`
-    });
-  } catch (error) {
-    console.error('Upload error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error processing upload',
-      error: error.message
-    });
-  }
-};
+        const prelim = parseFloat(row.PRELIM_GRADE) || 0;
+        const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
+        const final = parseFloat(row.FINAL_GRADE) || 0;
+        const gwa = (prelim + midterm + final) / 3;
 
-// Helper function to process individual rows
-const processRow = (row, columnNames) => {
-  const transformedRow = {};
-  Object.entries(row).forEach(([key, value]) => {
-    const normalizedKey = key.toLowerCase();
-    if (columnNames.includes(normalizedKey)) {
-      transformedRow[normalizedKey] = value;
-    }
+        transformedRow.gwa = gwa.toFixed(2);
+        transformedRow.remark = midterm && final ?
+          (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC';
+
+        results.push(transformedRow);
+      })
+      .on('end', resolve)
+      .on('error', reject);
   });
 
-  const prelim = parseFloat(row.PRELIM_GRADE) || 0;
-  const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
-  const final = parseFloat(row.FINAL_GRADE) || 0;
-  const gwa = (prelim + midterm + final) / 3;
+  for (const row of results) {
+    await promisePool.query(
+      'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
+      [row, row]
+    );
+  }
 
-  transformedRow.gwa = gwa.toFixed(2);
-  transformedRow.remark = midterm && final ?
-    (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC';
-
-  return transformedRow;
-};
-
-// Helper function to process batches using bulk insert
-const processBatch = async (batch) => {
-  if (batch.length === 0) return;
-
-  // Create bulk insert query
-  const keys = Object.keys(batch[0]);
-  const values = batch.map(row => Object.values(row));
-  
-  const query = `
-    INSERT INTO grades (${keys.join(', ')})
-    VALUES ?
-    ON DUPLICATE KEY UPDATE
-    ${keys.map(key => `${key} = VALUES(${key})`).join(', ')}
-  `;
-
-  await promisePool.query(query, [values]);
+  res.json({
+    success: true,
+    count: results.length,
+    tableInfo: {
+      columnCount: columns.length,
+      columns: columns.map(col => col.COLUMN_NAME)
+    }
+  });
 };
 
 // ENDPOINT 3: Communication
@@ -765,14 +732,8 @@ app.use('/.netlify/functions/service-database', router);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  if (err.name === 'UnauthorizedError') {
-    res.status(401).json({ success: false, message: 'Invalid token' });
-  } else if (err.message === 'Not allowed by CORS') {
-    res.status(403).json({ success: false, message: 'CORS error: Origin not allowed' });
-  } else {
-    console.error(err);
-    res.status(500).json({ success: false, message: 'Internal server error' });
-  }
+  console.error(err);
+  res.status(500).json({ success: false, message: 'Internal server error' });
 });
 
 // Export handler for Netlify Functions
