@@ -18,11 +18,22 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
   'https://mailer.cyberdyne.top',
-  'https://ecr-api-connection-database.netlify.app'
+  'https://ecr-api-connection-database.netlify.app',
+  '*'
 ];
 
+// CORS configuration
 const corsOptions = {
-  origin: allowedOrigins,
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, etc.)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes('*')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
@@ -496,8 +507,11 @@ const handleGetAllData = async (data, res) => {
 
 // ENDPOINT 2: Grades Management
 router.all('/grades', upload.single('file'), async (req, res) => {
+  // Set increased timeout for large requests
+  req.setTimeout(300000); // 5 minutes
+  res.setTimeout(300000); // 5 minutes
+
   try {
-    // Get table schema information
     const [columns] = await promisePool.query(`
       SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY
       FROM INFORMATION_SCHEMA.COLUMNS 
@@ -506,19 +520,10 @@ router.all('/grades', upload.single('file'), async (req, res) => {
       ORDER BY ORDINAL_POSITION;
     `);
 
-    // Log table structure for debugging
-    console.log('Table Structure:', columns.map(col => ({
-      name: col.COLUMN_NAME,
-      type: col.DATA_TYPE,
-      nullable: col.IS_NULLABLE,
-      key: col.COLUMN_KEY
-    })));
-
-    // GET: Fetch grades
     if (req.method === 'GET') {
       await handleGetGrades(req, res, columns);
     } else if (req.method === 'POST') {
-      await handlePostGrades(req, res, columns);
+      await handleBulkPostGrades(req, res, columns);
     } else {
       res.status(405).json({ success: false, message: 'Method not allowed' });
     }
@@ -532,83 +537,100 @@ router.all('/grades', upload.single('file'), async (req, res) => {
   }
 });
 
-const handleGetGrades = async (req, res, columns) => {
-  const { teacherId, studentId } = req.query;
-
-  if (req.query.schema === 'true') {
-    return res.json({
-      success: true,
-      columns: columns.map(col => ({
-        name: col.COLUMN_NAME,
-        type: col.DATA_TYPE,
-        nullable: col.IS_NULLABLE,
-        key: col.COLUMN_KEY
-      }))
-    });
+// New optimized bulk insert function
+const handleBulkPostGrades = async (req, res, columns) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: 'No file uploaded' });
   }
-
-  const query = teacherId ?
-    'SELECT * FROM grades WHERE faculty_id = ?' :
-    'SELECT * FROM grades WHERE student_num = ?';
-
-  const [grades] = await promisePool.query(query, [teacherId || studentId]);
-  res.json({ success: true, grades });
-};
-
-const handlePostGrades = async (req, res, columns) => {
-  if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
 
   const results = [];
   const columnNames = columns.map(col => col.COLUMN_NAME.toLowerCase());
+  const batchSize = 100; // Process 100 records at a time
+  let batch = [];
 
-  // Create a readable stream from the buffer
   const bufferStream = new require('stream').Readable();
   bufferStream.push(req.file.buffer);
   bufferStream.push(null);
 
-  await new Promise((resolve, reject) => {
-    bufferStream
-      .pipe(csv())
-      .on('data', (row) => {
-        // Transform row keys to match database column names
-        const transformedRow = {};
-        Object.entries(row).forEach(([key, value]) => {
-          const normalizedKey = key.toLowerCase();
-          if (columnNames.includes(normalizedKey)) {
-            transformedRow[normalizedKey] = value;
+  try {
+    await new Promise((resolve, reject) => {
+      bufferStream
+        .pipe(csv())
+        .on('data', (row) => {
+          const transformedRow = processRow(row, columnNames);
+          batch.push(transformedRow);
+
+          // When batch is full, process it
+          if (batch.length >= batchSize) {
+            processBatch(batch).catch(reject);
+            results.push(...batch);
+            batch = [];
           }
-        });
+        })
+        .on('end', async () => {
+          // Process remaining records
+          if (batch.length > 0) {
+            await processBatch(batch);
+            results.push(...batch);
+          }
+          resolve();
+        })
+        .on('error', reject);
+    });
 
-        const prelim = parseFloat(row.PRELIM_GRADE) || 0;
-        const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
-        const final = parseFloat(row.FINAL_GRADE) || 0;
-        const gwa = (prelim + midterm + final) / 3;
-
-        transformedRow.gwa = gwa.toFixed(2);
-        transformedRow.remark = midterm && final ?
-          (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC';
-
-        results.push(transformedRow);
-      })
-      .on('end', resolve)
-      .on('error', reject);
-  });
-
-  for (const row of results) {
-    await promisePool.query(
-      'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
-      [row, row]
-    );
+    res.json({
+      success: true,
+      count: results.length,
+      message: `Successfully processed ${results.length} records`
+    });
+  } catch (error) {
+    console.error('Upload error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error processing upload',
+      error: error.message
+    });
   }
+};
 
-  res.json({
-    success: true,
-    count: results.length,
-    tableInfo: {
-      columnCount: columns.length,
-      columns: columns.map(col => col.COLUMN_NAME)
+// Helper function to process individual rows
+const processRow = (row, columnNames) => {
+  const transformedRow = {};
+  Object.entries(row).forEach(([key, value]) => {
+    const normalizedKey = key.toLowerCase();
+    if (columnNames.includes(normalizedKey)) {
+      transformedRow[normalizedKey] = value;
     }
   });
+
+  const prelim = parseFloat(row.PRELIM_GRADE) || 0;
+  const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
+  const final = parseFloat(row.FINAL_GRADE) || 0;
+  const gwa = (prelim + midterm + final) / 3;
+
+  transformedRow.gwa = gwa.toFixed(2);
+  transformedRow.remark = midterm && final ?
+    (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC';
+
+  return transformedRow;
+};
+
+// Helper function to process batches using bulk insert
+const processBatch = async (batch) => {
+  if (batch.length === 0) return;
+
+  // Create bulk insert query
+  const keys = Object.keys(batch[0]);
+  const values = batch.map(row => Object.values(row));
+  
+  const query = `
+    INSERT INTO grades (${keys.join(', ')})
+    VALUES ?
+    ON DUPLICATE KEY UPDATE
+    ${keys.map(key => `${key} = VALUES(${key})`).join(', ')}
+  `;
+
+  await promisePool.query(query, [values]);
 };
 
 // ENDPOINT 3: Communication
