@@ -18,8 +18,7 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
   'https://mailer.cyberdyne.top',
-  'https://ecr-api-connection-database.netlify.app',
-  '*'
+  'https://ecr-api-connection-database.netlify.app'
 ];
 
 // CORS configuration
