@@ -10,7 +10,7 @@ import multer from 'multer';
 const app = express();
 const router = express.Router();
 
-// Configure CORS
+// Updated CORS configuration
 const allowedOrigins = [
   'http://127.0.0.1:5500',
   'http://127.0.0.1:5173',
@@ -21,23 +21,44 @@ const allowedOrigins = [
   'https://ecr-api-connection-database.netlify.app'
 ];
 
-// CORS configuration
-const corsOptions = {
+// Updated CORS options
+app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
     }
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
   maxAge: 86400
-};
+}));
 
-app.use(cors(corsOptions));
+// Pre-flight requests
+app.options('*', cors());
+
+// Enable JSON parsing before routes
 app.use(express.json());
+
+// Add CORS headers middleware
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Credentials', true);
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
+});
 
 // Configure multer to use memory storage instead of disk storage
 const upload = multer({
@@ -744,8 +765,14 @@ app.use('/.netlify/functions/service-database', router);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(500).json({ success: false, message: 'Internal server error' });
+  if (err.name === 'UnauthorizedError') {
+    res.status(401).json({ success: false, message: 'Invalid token' });
+  } else if (err.message === 'Not allowed by CORS') {
+    res.status(403).json({ success: false, message: 'CORS error: Origin not allowed' });
+  } else {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
 });
 
 // Export handler for Netlify Functions
