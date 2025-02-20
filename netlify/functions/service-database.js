@@ -577,50 +577,42 @@ const handleDeleteMultipleGrades = async (data, res) => {
     // Process each grade deletion
     for (const grade of grades) {
       try {
-        // First try to find by ecr_name
-        let gradeToDelete;
+        // Always try ecr_name first if available
         if (grade.ecr_name) {
-          [gradeToDelete] = await promisePool.query(
-            'SELECT * FROM grades WHERE ecr_name = ?',
+          const [deleteResult] = await promisePool.query(
+            'DELETE FROM grades WHERE ecr_name = ?',
             [grade.ecr_name]
           );
+
+          if (deleteResult.affectedRows > 0) {
+            results.push({
+              success: true,
+              grade: grade
+            });
+            continue;
+          }
         }
 
-        // If not found by ecr_name, try student_num and course_code
-        if (!gradeToDelete || gradeToDelete.length === 0) {
-          [gradeToDelete] = await promisePool.query(
-            'SELECT * FROM grades WHERE student_num = ? AND course_code = ?',
-            [grade.student_num, grade.course_code]
-          );
-        }
+        // Fallback to using student_num and course_code
+        const [deleteResult] = await promisePool.query(
+          'DELETE FROM grades WHERE student_num = ? AND course_code = ?',
+          [grade.student_num, grade.course_code]
+        );
 
-        if (!gradeToDelete || gradeToDelete.length === 0) {
+        if (deleteResult.affectedRows > 0) {
+          results.push({
+            success: true,
+            grade: grade
+          });
+        } else {
           errors.push({
             grade,
             message: 'Grade entry not found'
           });
-          continue;
         }
-
-        // Delete using the found record's criteria
-        if (grade.ecr_name) {
-          await promisePool.query(
-            'DELETE FROM grades WHERE ecr_name = ?',
-            [grade.ecr_name]
-          );
-        } else {
-          await promisePool.query(
-            'DELETE FROM grades WHERE student_num = ? AND course_code = ?',
-            [grade.student_num, grade.course_code]
-          );
-        }
-
-        results.push({
-          success: true,
-          grade: gradeToDelete[0]
-        });
 
       } catch (error) {
+        console.error('Error deleting grade:', error);
         errors.push({
           grade,
           message: error.message
