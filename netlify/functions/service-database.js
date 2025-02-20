@@ -524,7 +524,11 @@ router.all('/grades', upload.single('file'), async (req, res) => {
     if (req.method === 'GET') {
       await handleGetGrades(req, res, columns);
     } else if (req.method === 'POST') {
-      await handlePostGrades(req, res, columns);
+      if (req.file) {
+        await handleBatchUpload(req, res, columns);
+      } else {
+        await handleSingleGradeUpload(req, res, columns);
+      }
     } else {
       res.status(405).json({ success: false, message: 'Method not allowed' });
     }
@@ -561,60 +565,185 @@ const handleGetGrades = async (req, res, columns) => {
   res.json({ success: true, grades });
 };
 
-const handlePostGrades = async (req, res, columns) => {
-  if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+const handleSingleGradeUpload = async (req, res, columns) => {
+  try {
+    const columnNames = columns.map(col => col.COLUMN_NAME.toLowerCase());
+    
+    // Transform form data to match database columns
+    const gradeData = {};
+    for (const [key, value] of Object.entries(req.body)) {
+      const normalizedKey = key.toLowerCase();
+      if (columnNames.includes(normalizedKey)) {
+        gradeData[normalizedKey] = value;
+      }
+    }
 
-  const results = [];
-  const columnNames = columns.map(col => col.COLUMN_NAME.toLowerCase());
+    // Calculate GWA and remark if not provided
+    if (!gradeData.gwa || !gradeData.remark) {
+      const prelim = parseFloat(gradeData.prelim_grade) || 0;
+      const midterm = parseFloat(gradeData.midterm_grade) || 0;
+      const final = parseFloat(gradeData.final_grade) || 0;
+      const gwa = (prelim + midterm + final) / 3;
 
-  // Create a readable stream from the buffer
-  const bufferStream = new require('stream').Readable();
-  bufferStream.push(req.file.buffer);
-  bufferStream.push(null);
+      gradeData.gwa = gwa.toFixed(2);
+      gradeData.remark = midterm && final ?
+        (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC';
+    }
 
-  await new Promise((resolve, reject) => {
-    bufferStream
-      .pipe(csv())
-      .on('data', (row) => {
-        // Transform row keys to match database column names
-        const transformedRow = {};
-        Object.entries(row).forEach(([key, value]) => {
-          const normalizedKey = key.toLowerCase();
-          if (columnNames.includes(normalizedKey)) {
-            transformedRow[normalizedKey] = value;
-          }
-        });
-
-        const prelim = parseFloat(row.PRELIM_GRADE) || 0;
-        const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
-        const final = parseFloat(row.FINAL_GRADE) || 0;
-        const gwa = (prelim + midterm + final) / 3;
-
-        transformedRow.gwa = gwa.toFixed(2);
-        transformedRow.remark = midterm && final ?
-          (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC';
-
-        results.push(transformedRow);
-      })
-      .on('end', resolve)
-      .on('error', reject);
-  });
-
-  for (const row of results) {
+    // Insert or update the grade
     await promisePool.query(
       'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
-      [row, row]
+      [gradeData, gradeData]
     );
+
+    res.json({
+      success: true,
+      message: 'Grade uploaded successfully',
+      data: gradeData
+    });
+
+  } catch (error) {
+    console.error('Single grade upload error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error uploading grade',
+      error: error.message
+    });
+  }
+};
+
+const handleBatchUpload = async (req, res, columns) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: 'No file uploaded' });
   }
 
-  res.json({
-    success: true,
-    count: results.length,
-    tableInfo: {
-      columnCount: columns.length,
-      columns: columns.map(col => col.COLUMN_NAME)
+  const batchSize = parseInt(req.query.batchSize) || 5;
+  const columnNames = columns.map(col => col.COLUMN_NAME.toLowerCase());
+  const results = {
+    successful: [],
+    failed: [],
+    total: 0,
+    processed: 0
+  };
+
+  try {
+    // Create a readable stream from the buffer
+    const bufferStream = new require('stream').Readable();
+    bufferStream.push(req.file.buffer);
+    bufferStream.push(null);
+
+    let batch = [];
+    let isFirstRow = true;
+
+    await new Promise((resolve, reject) => {
+      bufferStream
+        .pipe(csv())
+        .on('data', async (row) => {
+          // Skip header row
+          if (isFirstRow) {
+            isFirstRow = false;
+            return;
+          }
+
+          results.total++;
+
+          try {
+            // Transform row keys to match database column names
+            const transformedRow = {};
+            Object.entries(row).forEach(([key, value]) => {
+              const normalizedKey = key.toLowerCase();
+              if (columnNames.includes(normalizedKey)) {
+                transformedRow[normalizedKey] = value;
+              }
+            });
+
+            // Calculate GWA and remark
+            const prelim = parseFloat(row.PRELIM_GRADE) || 0;
+            const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
+            const final = parseFloat(row.FINAL_GRADE) || 0;
+            const gwa = (prelim + midterm + final) / 3;
+
+            transformedRow.gwa = gwa.toFixed(2);
+            transformedRow.remark = midterm && final ?
+              (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC';
+
+            batch.push(transformedRow);
+
+            // Process batch when it reaches the specified size
+            if (batch.length >= batchSize) {
+              await processBatch(batch, results);
+              batch = [];
+            }
+          } catch (error) {
+            results.failed.push({
+              row: row,
+              error: error.message
+            });
+          }
+        })
+        .on('end', async () => {
+          // Process remaining records in the last batch
+          if (batch.length > 0) {
+            await processBatch(batch, results);
+          }
+          resolve();
+        })
+        .on('error', reject);
+    });
+
+    res.json({
+      success: true,
+      results: {
+        total: results.total,
+        processed: results.processed,
+        successful: results.successful.length,
+        failed: results.failed,
+        message: `Successfully processed ${results.successful.length} out of ${results.total} records`
+      }
+    });
+
+  } catch (error) {
+    console.error('Batch upload error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error processing batch upload',
+      error: error.message
+    });
+  }
+};
+
+const processBatch = async (batch, results) => {
+  try {
+    // Use transaction for batch processing
+    const connection = await promisePool.getConnection();
+    await connection.beginTransaction();
+
+    try {
+      for (const row of batch) {
+        await connection.query(
+          'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
+          [row, row]
+        );
+        results.successful.push(row);
+        results.processed++;
+      }
+
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
     }
-  });
+  } catch (error) {
+    console.error('Error processing batch:', error);
+    batch.forEach(row => {
+      results.failed.push({
+        row: row,
+        error: error.message
+      });
+    });
+  }
 };
 
 // ENDPOINT 3: Communication
