@@ -7,6 +7,29 @@ import nodemailer from 'nodemailer';
 import serverless from 'serverless-http';
 import multer from 'multer';
 
+// Logger utility function
+const logRequest = (endpoint, action, details) => {
+  const timestamp = new Date().toISOString();
+  console.log(JSON.stringify({
+    timestamp,
+    endpoint,
+    action,
+    ...details
+  }));
+};
+
+const logError = (endpoint, action, error, details = {}) => {
+  const timestamp = new Date().toISOString();
+  console.error(JSON.stringify({
+    timestamp,
+    endpoint,
+    action,
+    error: error.message,
+    stack: error.stack,
+    ...details
+  }));
+};
+
 const app = express();
 const router = express.Router();
 
@@ -611,24 +634,53 @@ router.all('/grades', upload.single('file'), async (req, res) => {
 const handleGetGrades = async (req, res, columns) => {
   const { teacherId, studentId } = req.query;
 
-  if (req.query.schema === 'true') {
-    return res.json({
-      success: true,
-      columns: columns.map(col => ({
-        name: col.COLUMN_NAME,
-        type: col.DATA_TYPE,
-        nullable: col.IS_NULLABLE,
-        key: col.COLUMN_KEY
-      }))
+  logRequest('grades', 'fetch-request', { 
+    teacherId, 
+    studentId,
+    schemaRequest: req.query.schema === 'true' 
+  });
+
+  try {
+    if (req.query.schema === 'true') {
+      logRequest('grades', 'schema-fetch', { 
+        columnCount: columns.length 
+      });
+      
+      return res.json({
+        success: true,
+        columns: columns.map(col => ({
+          name: col.COLUMN_NAME,
+          type: col.DATA_TYPE,
+          nullable: col.IS_NULLABLE,
+          key: col.COLUMN_KEY
+        }))
+      });
+    }
+
+    const query = teacherId ?
+      'SELECT * FROM grades WHERE faculty_id = ?' :
+      'SELECT * FROM grades WHERE student_num = ?';
+
+    const [grades] = await promisePool.query(query, [teacherId || studentId]);
+    
+    logRequest('grades', 'fetch-success', { 
+      recordCount: grades.length,
+      queryType: teacherId ? 'teacher' : 'student'
+    });
+
+    res.json({ success: true, grades });
+  } catch (error) {
+    logError('grades', 'fetch', error, { 
+      teacherId, 
+      studentId 
+    });
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching grades',
+      error: error.message
     });
   }
-
-  const query = teacherId ?
-    'SELECT * FROM grades WHERE faculty_id = ?' :
-    'SELECT * FROM grades WHERE student_num = ?';
-
-  const [grades] = await promisePool.query(query, [teacherId || studentId]);
-  res.json({ success: true, grades });
 };
 
 const handleSingleGradeUpload = async (req, res, columns) => {
@@ -680,17 +732,22 @@ const handleSingleGradeUpload = async (req, res, columns) => {
 
 const handleBatchUpload = async (req, res, columns) => {
   if (!req.file) {
-    return res.status(400).json({ success: false, message: 'No file uploaded' });
+    logRequest('grades', 'batch-upload-failed', { 
+      reason: 'No file provided' 
+    });
+    
+    return res.status(400).json({ 
+      success: false, 
+      message: 'No file uploaded' 
+    });
   }
 
   const batchSize = parseInt(req.query.batchSize) || 5;
-  const columnNames = columns.map(col => col.COLUMN_NAME.toLowerCase());
-  const results = {
-    successful: [],
-    failed: [],
-    total: 0,
-    processed: 0
-  };
+  
+  logRequest('grades', 'batch-upload-start', { 
+    fileSize: req.file.size,
+    batchSize
+  });
 
   try {
     // Create a readable stream from the buffer
@@ -755,6 +812,12 @@ const handleBatchUpload = async (req, res, columns) => {
           resolve();
         })
         .on('error', reject);
+    });
+
+    logRequest('grades', 'batch-upload-complete', {
+      totalRecords: results.total,
+      successfulUploads: results.successful.length,
+      failedUploads: results.failed.length
     });
 
     res.json({
@@ -904,24 +967,6 @@ router.delete('/teachers/:teacherId', async (req, res) => {
   }
 });
 
-// Error handling
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).send('Something broke!');
-});
-
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  try {
-    await pool.end();
-    console.log('Pool connections closed.');
-    process.exit(0);
-  } catch (err) {
-    console.error('Error closing pool:', err);
-    process.exit(1);
-  }
-});
-
 // Mount all routes under /.netlify/functions/service-database
 app.use('/.netlify/functions/service-database', router);
 
@@ -929,6 +974,35 @@ app.use('/.netlify/functions/service-database', router);
 app.use((err, req, res, next) => {
   console.error(err);
   res.status(500).json({ success: false, message: 'Internal server error' });
+});
+
+// Add logging to error handling middleware
+app.use((err, req, res, next) => {
+  logError('global', 'middleware', err, {
+    path: req.path,
+    method: req.method,
+    query: req.query,
+    body: req.body
+  });
+  
+  res.status(500).json({ 
+    success: false, 
+    message: 'Internal server error' 
+  });
+});
+
+// Add logging to graceful shutdown
+process.on('SIGINT', async () => {
+  try {
+    await pool.end();
+    logRequest('system', 'shutdown', { 
+      status: 'success' 
+    });
+    process.exit(0);
+  } catch (err) {
+    logError('system', 'shutdown', err);
+    process.exit(1);
+  }
 });
 
 // Export handler for Netlify Functions
