@@ -154,7 +154,10 @@ router.post('/auth', async (req, res) => {
         await handleBatchDeleteTeachers(data, res);
         break;
       case 'delete-grade':
-        await handleDeleteGrade(data, res);
+        await handleDeleteGrade(req.body, res);
+        break;
+      case 'delete-multiple-grades':
+        await handleDeleteMultipleGrades(req.body, res);
         break;
       case 'get-alldata':
         await handleGetAllData(data, res);
@@ -508,29 +511,143 @@ const handleDeleteTeacher = async (data, res) => {
 };
 
 const handleDeleteGrade = async (data, res) => {
-  const { ecr_name: deleteEcrName } = data;
+  const { ecr_name: deleteEcrName, student_num: studentNum, course_code: courseCode } = data;
 
-  // Check if grade entry exists
-  const [gradeToDelete] = await promisePool.query(
-    'SELECT * FROM grades WHERE ecr_name = ?',
-    [deleteEcrName]
-  );
+  try {
+    // First try to find by ecr_name
+    let gradeToDelete;
+    if (deleteEcrName) {
+      [gradeToDelete] = await promisePool.query(
+        'SELECT * FROM grades WHERE ecr_name = ?',
+        [deleteEcrName]
+      );
+    }
 
-  if (gradeToDelete.length === 0) {
-    return res.status(404).json({ success: false, message: 'Grade entry not found' });
+    // If not found by ecr_name, try student_num and course_code
+    if (!gradeToDelete || gradeToDelete.length === 0) {
+      [gradeToDelete] = await promisePool.query(
+        'SELECT * FROM grades WHERE student_num = ? AND course_code = ?',
+        [studentNum, courseCode]
+      );
+    }
+
+    if (!gradeToDelete || gradeToDelete.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Grade entry not found' 
+      });
+    }
+
+    // Delete using the found record's criteria
+    if (deleteEcrName) {
+      await promisePool.query(
+        'DELETE FROM grades WHERE ecr_name = ?',
+        [deleteEcrName]
+      );
+    } else {
+      await promisePool.query(
+        'DELETE FROM grades WHERE student_num = ? AND course_code = ?',
+        [studentNum, courseCode]
+      );
+    }
+
+    res.json({
+      success: true,
+      message: 'Grade entry deleted successfully',
+      deletedGrade: gradeToDelete[0]
+    });
+
+  } catch (error) {
+    console.error('Error deleting grade:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting grade entry',
+      error: error.message
+    });
   }
+};
 
-  // Delete the grade entry
-  await promisePool.query(
-    'DELETE FROM grades WHERE ecr_name = ?',
-    [deleteEcrName]
-  );
+const handleDeleteMultipleGrades = async (data, res) => {
+  const { grades } = data;
+  
+  try {
+    const results = [];
+    const errors = [];
 
-  res.json({
-    success: true,
-    message: 'Grade entry deleted successfully',
-    deletedGrade: gradeToDelete[0]
-  });
+    // Process each grade deletion
+    for (const grade of grades) {
+      try {
+        // First try to find by ecr_name
+        let gradeToDelete;
+        if (grade.ecr_name) {
+          [gradeToDelete] = await promisePool.query(
+            'SELECT * FROM grades WHERE ecr_name = ?',
+            [grade.ecr_name]
+          );
+        }
+
+        // If not found by ecr_name, try student_num and course_code
+        if (!gradeToDelete || gradeToDelete.length === 0) {
+          [gradeToDelete] = await promisePool.query(
+            'SELECT * FROM grades WHERE student_num = ? AND course_code = ?',
+            [grade.student_num, grade.course_code]
+          );
+        }
+
+        if (!gradeToDelete || gradeToDelete.length === 0) {
+          errors.push({
+            grade,
+            message: 'Grade entry not found'
+          });
+          continue;
+        }
+
+        // Delete using the found record's criteria
+        if (grade.ecr_name) {
+          await promisePool.query(
+            'DELETE FROM grades WHERE ecr_name = ?',
+            [grade.ecr_name]
+          );
+        } else {
+          await promisePool.query(
+            'DELETE FROM grades WHERE student_num = ? AND course_code = ?',
+            [grade.student_num, grade.course_code]
+          );
+        }
+
+        results.push({
+          success: true,
+          grade: gradeToDelete[0]
+        });
+
+      } catch (error) {
+        errors.push({
+          grade,
+          message: error.message
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Batch deletion completed',
+      results: {
+        successful: results,
+        failed: errors,
+        totalProcessed: grades.length,
+        successCount: results.length,
+        failureCount: errors.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Error in batch deletion:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error processing batch deletion',
+      error: error.message
+    });
+  }
 };
 
 const handleGetAllData = async (data, res) => {
