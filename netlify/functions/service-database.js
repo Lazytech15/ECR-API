@@ -121,8 +121,14 @@ router.post('/auth', async (req, res) => {
       case 'delete-student':
         await handleDeleteStudent(data, res);
         break;
+      case 'delete-batch-student':
+        await handleBatchDeleteStudents(data, res);
+        break;
       case 'delete-teacher':   // Add teacher deletion
         await handleDeleteTeacher(data, res);
+        break;
+      case 'delete-batch-teacher':   // Add teacher deletion
+        await handleBatchDeleteTeachers(data, res);
         break;
       case 'delete-grade':
         await handleDeleteGrade(data, res);
@@ -370,6 +376,66 @@ const handleUpdate = async (data, res) => {
   );
 
   res.json({ success: true, message: 'Update successful' });
+};
+
+const handleBatchDeleteStudents = async (data, res) => {
+  const { studentIds } = data;
+  
+  try {
+    // Use transaction to ensure all deletions succeed or none do
+    await promisePool.query('START TRANSACTION');
+    
+    for (const studentId of studentIds) {
+      await promisePool.query(
+        'DELETE FROM students WHERE student_id = ?',
+        [studentId]
+      );
+    }
+    
+    await promisePool.query('COMMIT');
+    
+    res.json({
+      success: true,
+      message: `Successfully deleted ${studentIds.length} students`
+    });
+  } catch (error) {
+    await promisePool.query('ROLLBACK');
+    console.error('Error in batch delete students:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting students'
+    });
+  }
+};
+
+const handleBatchDeleteTeachers = async (data, res) => {
+  const { teacherIds } = data;
+  
+  try {
+    // Use transaction to ensure all deletions succeed or none do
+    await promisePool.query('START TRANSACTION');
+    
+    for (const teacherId of teacherIds) {
+      await promisePool.query(
+        'DELETE FROM teacher WHERE teacher_id = ?',
+        [teacherId]
+      );
+    }
+    
+    await promisePool.query('COMMIT');
+    
+    res.json({
+      success: true,
+      message: `Successfully deleted ${teacherIds.length} teachers`
+    });
+  } catch (error) {
+    await promisePool.query('ROLLBACK');
+    console.error('Error in batch delete teachers:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting teachers'
+    });
+  }
 };
 
 const handleDeleteStudent = async (data, res) => {
