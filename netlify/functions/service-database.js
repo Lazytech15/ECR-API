@@ -512,7 +512,7 @@ const handleDeleteGrade = async (data, res) => {
 
   // Check if grade entry exists
   const [gradeToDelete] = await promisePool.query(
-    'SELECT * FROM grades WHERE ecr_name = ?',
+    'SELECT * FROM grades WHERE student_num = ?',
     [deleteEcrName]
   );
 
@@ -522,7 +522,7 @@ const handleDeleteGrade = async (data, res) => {
 
   // Delete the grade entry
   await promisePool.query(
-    'DELETE FROM grades WHERE ecr_name = ?',
+    'DELETE FROM grades WHERE student_num = ?',
     [deleteEcrName]
   );
 
