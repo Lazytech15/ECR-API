@@ -11,19 +11,19 @@ const app = express();
 const router = express.Router();
 
 // Configure CORS
+const allowedOrigins = [
+  'http://127.0.0.1:5500',
+  'http://127.0.0.1:5173',
+  'http://localhost:5500',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'https://mailer.cyberdyne.top',
+  'https://ecr-api-connection-database.netlify.app'
+];
+
 const corsOptions = {
   origin: function (origin, callback) {
-    const allowedOrigins = [
-      'http://127.0.0.1:5500',
-      'http://127.0.0.1:5173',
-      'http://localhost:5500',
-      'http://localhost:5173',
-      'http://localhost:3000',
-      'https://mailer.cyberdyne.top',
-      'https://ecr-api-connection-database.netlify.app'
-    ];
-    
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -500,23 +500,10 @@ const handleGetAllData = async (data, res) => {
   }
 };
 
-// Batch size for processing records
-const BATCH_SIZE = 50;
-
 // ENDPOINT 2: Grades Management
 router.all('/grades', upload.single('file'), async (req, res) => {
-  // Set CORS headers for every request
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.header('Access-Control-Allow-Credentials', 'true');
-
-  // Handle preflight requests
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
   try {
+    // Get table schema information
     const [columns] = await promisePool.query(`
       SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY
       FROM INFORMATION_SCHEMA.COLUMNS 
@@ -525,6 +512,15 @@ router.all('/grades', upload.single('file'), async (req, res) => {
       ORDER BY ORDINAL_POSITION;
     `);
 
+    // Log table structure for debugging
+    console.log('Table Structure:', columns.map(col => ({
+      name: col.COLUMN_NAME,
+      type: col.DATA_TYPE,
+      nullable: col.IS_NULLABLE,
+      key: col.COLUMN_KEY
+    })));
+
+    // GET: Fetch grades
     if (req.method === 'GET') {
       await handleGetGrades(req, res, columns);
     } else if (req.method === 'POST') {
@@ -566,117 +562,59 @@ const handleGetGrades = async (req, res, columns) => {
 };
 
 const handlePostGrades = async (req, res, columns) => {
-  if (!req.file) {
-    return res.status(400).json({ success: false, message: 'No file uploaded' });
-  }
+  if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
 
   const results = [];
-  const errors = [];
   const columnNames = columns.map(col => col.COLUMN_NAME.toLowerCase());
-  let processedCount = 0;
 
-  try {
-    // Create a readable stream from the buffer
-    const bufferStream = new require('stream').Readable();
-    bufferStream.push(req.file.buffer);
-    bufferStream.push(null);
+  // Create a readable stream from the buffer
+  const bufferStream = new require('stream').Readable();
+  bufferStream.push(req.file.buffer);
+  bufferStream.push(null);
 
-    // Process CSV data
-    await new Promise((resolve, reject) => {
-      bufferStream
-        .pipe(csv())
-        .on('data', (row) => {
-          try {
-            const transformedRow = processRow(row, columnNames);
-            results.push(transformedRow);
-          } catch (error) {
-            errors.push({ row, error: error.message });
+  await new Promise((resolve, reject) => {
+    bufferStream
+      .pipe(csv())
+      .on('data', (row) => {
+        // Transform row keys to match database column names
+        const transformedRow = {};
+        Object.entries(row).forEach(([key, value]) => {
+          const normalizedKey = key.toLowerCase();
+          if (columnNames.includes(normalizedKey)) {
+            transformedRow[normalizedKey] = value;
           }
-        })
-        .on('end', resolve)
-        .on('error', reject);
-    });
+        });
 
-    // Process in batches
-    for (let i = 0; i < results.length; i += BATCH_SIZE) {
-      const batch = results.slice(i, i + BATCH_SIZE);
-      await processBatch(batch);
-      processedCount += batch.length;
+        const prelim = parseFloat(row.PRELIM_GRADE) || 0;
+        const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
+        const final = parseFloat(row.FINAL_GRADE) || 0;
+        const gwa = (prelim + midterm + final) / 3;
 
-      // Optional: Send progress updates
-      if (req.socket.writable) {
-        res.write(JSON.stringify({
-          type: 'progress',
-          processed: processedCount,
-          total: results.length
-        }) + '\n');
-      }
-    }
+        transformedRow.gwa = gwa.toFixed(2);
+        transformedRow.remark = midterm && final ?
+          (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC';
 
-    // Send final response
-    res.json({
-      success: true,
-      count: processedCount,
-      errors: errors.length > 0 ? errors : undefined,
-      tableInfo: {
-        columnCount: columns.length,
-        columns: columns.map(col => col.COLUMN_NAME)
-      }
-    });
-  } catch (error) {
-    console.error('Error processing grades:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error processing grades',
-      error: error.message
-    });
-  }
-};
-
-// Helper function to process individual rows
-const processRow = (row, columnNames) => {
-  const transformedRow = {};
-  
-  Object.entries(row).forEach(([key, value]) => {
-    const normalizedKey = key.toLowerCase();
-    if (columnNames.includes(normalizedKey)) {
-      transformedRow[normalizedKey] = value;
-    }
+        results.push(transformedRow);
+      })
+      .on('end', resolve)
+      .on('error', reject);
   });
 
-  // Calculate grades
-  const prelim = parseFloat(row.PRELIM_GRADE) || 0;
-  const midterm = parseFloat(row.MIDTERM_GRADE) || 0;
-  const final = parseFloat(row.FINAL_GRADE) || 0;
-  const gwa = (prelim + midterm + final) / 3;
-
-  transformedRow.gwa = gwa.toFixed(2);
-  transformedRow.remark = midterm && final ? 
-    (gwa <= 3.00 ? 'PASSED' : 'FAILED') : 'INC';
-
-  return transformedRow;
-};
-
-// Helper function to process batches of records
-const processBatch = async (batch) => {
-  const connection = await promisePool.getConnection();
-  try {
-    await connection.beginTransaction();
-
-    for (const row of batch) {
-      await connection.query(
-        'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
-        [row, row]
-      );
-    }
-
-    await connection.commit();
-  } catch (error) {
-    await connection.rollback();
-    throw error;
-  } finally {
-    connection.release();
+  for (const row of results) {
+    await promisePool.query(
+      'INSERT INTO grades SET ? ON DUPLICATE KEY UPDATE ?',
+      [row, row]
+    );
   }
+
+  res.json({
+    success: true,
+    count: results.length,
+    tableInfo: {
+      columnCount: columns.length,
+      columns: columns.map(col => col.COLUMN_NAME)
+    }
+  });
 };
 
 // ENDPOINT 3: Communication
