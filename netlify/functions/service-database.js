@@ -11,19 +11,19 @@ const app = express();
 const router = express.Router();
 
 // Configure CORS
-const allowedOrigins = [
-  'http://127.0.0.1:5500',
-  'http://127.0.0.1:5173',
-  'http://localhost:5500',
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'https://mailer.cyberdyne.top',
-  'https://ecr-api-connection-database.netlify.app'
-];
-
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+    const allowedOrigins = [
+      'http://127.0.0.1:5500',
+      'http://127.0.0.1:5173',
+      'http://localhost:5500',
+      'http://localhost:5173',
+      'http://localhost:3000',
+      'https://mailer.cyberdyne.top',
+      'https://ecr-api-connection-database.netlify.app'
+    ];
+    
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -505,9 +505,17 @@ const BATCH_SIZE = 50;
 
 // ENDPOINT 2: Grades Management
 router.all('/grades', upload.single('file'), async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', corsOptions.origin);
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  
+  // Set CORS headers for every request
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   try {
     const [columns] = await promisePool.query(`
       SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY
@@ -517,9 +525,7 @@ router.all('/grades', upload.single('file'), async (req, res) => {
       ORDER BY ORDINAL_POSITION;
     `);
 
-    if (req.method === 'OPTIONS') {
-      return res.status(200).end();
-    } else if (req.method === 'GET') {
+    if (req.method === 'GET') {
       await handleGetGrades(req, res, columns);
     } else if (req.method === 'POST') {
       await handlePostGrades(req, res, columns);
