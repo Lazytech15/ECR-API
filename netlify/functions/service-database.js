@@ -40,7 +40,6 @@ const allowedOrigins = [
   'http://localhost:5500',
   'http://localhost:5173',
   'http://localhost:3000',
-  'http://localhost:4173',
   'https://mailer.cyberdyne.top',
   'https://ecr-api-connection-database.netlify.app'
 ];
@@ -660,9 +659,9 @@ const handleGetAllData = async (data, res) => {
     }
 
     // Get students, teachers, and grades data for admin dashboard
-    const [students] = await promisePool.query(
-      'SELECT student_id, full_name, password, course FROM students'
-    );
+  const [students] = await promisePool.query(
+    'SELECT student_id, full_name, course, section, trimester, email, username, password FROM students'
+  );
     
     const [teachers] = await promisePool.query(
       'SELECT teacher_id, teacher_name, personal_email, password, username FROM teacher'
