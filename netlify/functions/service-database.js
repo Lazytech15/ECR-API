@@ -162,6 +162,15 @@ router.post('/auth', async (req, res) => {
       case 'get-alldata':
         await handleGetAllData(data, res);
         break;
+      case 'update-student':
+        await handleUpdateStudent(data, res);
+        break;
+      case 'update-teacher':
+        await handleUpdateTeacher(data, res);
+        break;
+      case 'update-grade':
+        await handleUpdateGrade(data, res);
+        break;
       default:
         res.status(400).json({ success: false, message: 'Invalid action' });
     }
@@ -694,6 +703,161 @@ const handleGetAllData = async (data, res) => {
     });
   } catch (error) {
     console.error('Error fetching data:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// Add these handler functions:
+const handleUpdateStudent = async (data, res) => {
+  try {
+    const { 
+      studentId, 
+      currentPassword,
+      newPassword,
+      newSection,
+      newTrimester, 
+      newEmail,
+      newCourse 
+    } = data;
+
+    // First verify the current password if provided
+    if (currentPassword) {
+      const student = await pool.query(
+        'SELECT password FROM students WHERE student_id = $1',
+        [studentId]
+      );
+
+      if (!student.rows[0]) {
+        return res.status(404).json({ success: false, message: 'Student not found' });
+      }
+
+      const validPassword = await bcrypt.compare(currentPassword, student.rows[0].password);
+      if (!validPassword) {
+        return res.status(400).json({ success: false, message: 'Invalid current password' });
+      }
+    }
+
+    // Prepare update query parts
+    let updates = [];
+    let values = [];
+    let paramCount = 1;
+
+    if (newPassword) {
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      updates.push(`password = $${paramCount}`);
+      values.push(hashedPassword);
+      paramCount++;
+    }
+    if (newSection) {
+      updates.push(`section = $${paramCount}`);
+      values.push(newSection);
+      paramCount++;
+    }
+    if (newTrimester) {
+      updates.push(`trimester = $${paramCount}`);
+      values.push(newTrimester);
+      paramCount++;
+    }
+    if (newEmail) {
+      updates.push(`email = $${paramCount}`);
+      values.push(newEmail);
+      paramCount++;
+    }
+    if (newCourse) {
+      updates.push(`course = $${paramCount}`);
+      values.push(newCourse);
+      paramCount++;
+    }
+
+    values.push(studentId);
+    const updateQuery = `
+      UPDATE students 
+      SET ${updates.join(', ')}
+      WHERE student_id = $${paramCount}
+      RETURNING *
+    `;
+
+    const result = await pool.query(updateQuery, values);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Student not found' });
+    }
+
+    res.json({ success: true, message: 'Student updated successfully', data: result.rows[0] });
+  } catch (error) {
+    console.error('Error updating student:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+const handleUpdateTeacher = async (data, res) => {
+  try {
+    const { teacherId, teacherName, personalEmail } = data;
+
+    const updateQuery = `
+      UPDATE teacher 
+      SET 
+        teacher_name = COALESCE($1, teacher_name),
+        personal_email = COALESCE($2, personal_email)
+      WHERE teacher_id = $3
+      RETURNING *
+    `;
+
+    const result = await pool.query(updateQuery, [teacherName, personalEmail, teacherId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Teacher not found' });
+    }
+
+    res.json({ success: true, message: 'Teacher updated successfully', data: result.rows[0] });
+  } catch (error) {
+    console.error('Error updating teacher:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+const handleUpdateGrade = async (data, res) => {
+  try {
+    const { 
+      ecrName,
+      studentNum,
+      courseCode,
+      prelimGrade,
+      midtermGrade,
+      finalGrade,
+      remark
+    } = data;
+
+    const updateQuery = `
+      UPDATE grades 
+      SET 
+        prelim_grade = COALESCE($1, prelim_grade),
+        midterm_grade = COALESCE($2, midterm_grade),
+        final_grade = COALESCE($3, final_grade),
+        remark = COALESCE($4, remark)
+      WHERE ecr_name = $5 
+      AND student_num = $6 
+      AND course_code = $7
+      RETURNING *
+    `;
+
+    const result = await pool.query(updateQuery, [
+      prelimGrade,
+      midtermGrade,
+      finalGrade,
+      remark,
+      ecrName,
+      studentNum,
+      courseCode
+    ]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Grade record not found' });
+    }
+
+    res.json({ success: true, message: 'Grade updated successfully', data: result.rows[0] });
+  } catch (error) {
+    console.error('Error updating grade:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };
