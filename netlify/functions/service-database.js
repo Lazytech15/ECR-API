@@ -710,8 +710,7 @@ const handleGetAllData = async (data, res) => {
 const handleUpdateStudent = async (data, res) => {
   try {
     const { 
-      studentId, 
-      currentPassword,
+      studentId,
       newPassword,
       newSection,
       newTrimester, 
@@ -721,20 +720,12 @@ const handleUpdateStudent = async (data, res) => {
 
     // First verify the student exists
     const [student] = await promisePool.query(
-      'SELECT password FROM students WHERE student_id = ?',
+      'SELECT student_id FROM students WHERE student_id = ?',
       [studentId]
     );
 
     if (!student.length) {
       return res.status(404).json({ success: false, message: 'Student not found' });
-    }
-
-    // Verify current password if changing password
-    if (currentPassword) {
-      const validPassword = await bcrypt.compare(currentPassword, student[0].password);
-      if (!validPassword) {
-        return res.status(400).json({ success: false, message: 'Invalid current password' });
-      }
     }
 
     // Build update object
@@ -774,7 +765,7 @@ const handleUpdateStudent = async (data, res) => {
 
 const handleUpdateTeacher = async (data, res) => {
   try {
-    const { teacherId, teacherName, personalEmail } = data;
+    const { teacherId, teacherName, personalEmail, newPassword } = data;
 
     // Validate required field
     if (!teacherId) {
@@ -785,6 +776,9 @@ const handleUpdateTeacher = async (data, res) => {
     const updates = {};
     if (teacherName) updates.teacher_name = teacherName;
     if (personalEmail) updates.personal_email = personalEmail;
+    if (newPassword) {
+      updates.password = await bcrypt.hash(newPassword, 10);
+    }
 
     // Only proceed if there are updates
     if (Object.keys(updates).length === 0) {
