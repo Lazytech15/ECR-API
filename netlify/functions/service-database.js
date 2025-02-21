@@ -1166,24 +1166,129 @@ const processBatch = async (batch, results) => {
 };
 
 // ENDPOINT 3: Communication
+
+// Add this after the database configuration section
+// Create email_tracking table if it doesn't exist
+const createTrackingTable = async () => {
+  try {
+    await promisePool.query(`
+      CREATE TABLE IF NOT EXISTS email_tracking (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        date DATE,
+        count INT DEFAULT 0,
+        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+  } catch (error) {
+    console.error('Error creating tracking table:', error);
+    throw error;
+  }
+};
+
+// Initialize tracking table
+createTrackingTable();
+
+// Email tracking functions
+const getCurrentDateKey = () => {
+  const date = new Date();
+  return date.toISOString().split('T')[0]; // Returns YYYY-MM-DD
+};
+
+const getOrCreateDailyCounter = async () => {
+  const dateKey = getCurrentDateKey();
+  
+  try {
+    // Try to get existing counter
+    const [rows] = await promisePool.query(
+      'SELECT * FROM email_tracking WHERE date = ?',
+      [dateKey]
+    );
+
+    if (rows.length > 0) {
+      return rows[0];
+    }
+
+    // Create new counter if none exists
+    await promisePool.query(
+      'INSERT INTO email_tracking (date, count) VALUES (?, 0)',
+      [dateKey]
+    );
+
+    const [newCounter] = await promisePool.query(
+      'SELECT * FROM email_tracking WHERE date = ?',
+      [dateKey]
+    );
+
+    return newCounter[0];
+  } catch (error) {
+    console.error('Error managing email counter:', error);
+    throw error;
+  }
+};
+
+const incrementEmailCount = async () => {
+  const dateKey = getCurrentDateKey();
+  
+  try {
+    const counter = await getOrCreateDailyCounter();
+    
+    if (counter.count >= 500) {
+      throw new Error('Daily email limit (500) reached');
+    }
+
+    await promisePool.query(
+      'UPDATE email_tracking SET count = count + 1 WHERE date = ?',
+      [dateKey]
+    );
+
+    return counter.count + 1;
+  } catch (error) {
+    console.error('Error incrementing email count:', error);
+    throw error;
+  }
+};
+
+// Modified communication endpoint with tracking
 router.post('/communicate', async (req, res) => {
   try {
     const { type, data } = req.body;
 
     switch (type) {
       case 'email':
-        await transporter.sendMail({
-          from: '"ECR Online Grade" <projectipt00@gmail.com>',
-          to: data.to,
-          subject: data.subject,
-          html: data.content
-        });
-        res.json({ success: true });
+        try {
+          // Check and increment email count before sending
+          const newCount = await incrementEmailCount();
+          
+          await transporter.sendMail({
+            from: '"ECR Online Grade" <projectipt00@gmail.com>',
+            to: data.to,
+            subject: data.subject,
+            html: data.content
+          });
+
+          res.json({ 
+            success: true,
+            emailsSentToday: newCount,
+            remainingEmails: 500 - newCount
+          });
+        } catch (error) {
+          if (error.message === 'Daily email limit (500) reached') {
+            return res.status(429).json({ 
+              success: false, 
+              message: 'Daily email limit reached. Please try again tomorrow.',
+              emailsSentToday: 500,
+              remainingEmails: 0
+            });
+          }
+          throw error;
+        }
         break;
+
       case 'notification':
         // Add notification logic here if needed
         res.json({ success: true });
         break;
+
       default:
         res.status(400).json({ success: false, message: 'Invalid communication type' });
     }
@@ -1192,6 +1297,42 @@ router.post('/communicate', async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
+
+// New endpoint to check email quota status
+router.get('/email-quota', async (req, res) => {
+  try {
+    const counter = await getOrCreateDailyCounter();
+    
+    res.json({
+      success: true,
+      currentDate: getCurrentDateKey(),
+      emailsSentToday: counter.count,
+      remainingEmails: 500 - counter.count,
+      lastUpdated: counter.last_updated
+    });
+  } catch (error) {
+    console.error('Error checking email quota:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Add a cleanup function to remove old records (optional)
+const cleanupOldRecords = async () => {
+  try {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    await promisePool.query(
+      'DELETE FROM email_tracking WHERE date < ?',
+      [thirtyDaysAgo.toISOString().split('T')[0]]
+    );
+  } catch (error) {
+    console.error('Error cleaning up old records:', error);
+  }
+};
+
+// Run cleanup periodically (e.g., once a day)
+setInterval(cleanupOldRecords, 24 * 60 * 60 * 1000);
 
 // ENDPOINT 4: File Upload
 router.get('/teachers', async (req, res) => {
