@@ -1298,6 +1298,55 @@ router.post('/communicate', async (req, res) => {
   }
 });
 
+router.post('/nfccommunication', async (req, res) => {
+  try {
+    const { type, data } = req.body;
+
+    switch (type) {
+      case 'email':
+        try {
+          // Check and increment email count before sending
+          const newCount = await incrementEmailCount();
+          
+          await transporter.sendMail({
+            from: '"Next-Gen-Pemss" <projectipt00@gmail.com>',
+            to: data.to,
+            subject: data.subject,
+            html: data.content
+          });
+
+          res.json({ 
+            success: true,
+            emailsSentToday: newCount,
+            remainingEmails: 500 - newCount
+          });
+        } catch (error) {
+          if (error.message === 'Daily email limit (500) reached') {
+            return res.status(429).json({ 
+              success: false, 
+              message: 'Daily email limit reached. Please try again tomorrow.',
+              emailsSentToday: 500,
+              remainingEmails: 0
+            });
+          }
+          throw error;
+        }
+        break;
+
+      case 'notification':
+        // Add notification logic here if needed
+        res.json({ success: true });
+        break;
+
+      default:
+        res.status(400).json({ success: false, message: 'Invalid communication type' });
+    }
+  } catch (error) {
+    console.error('Communication error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 // New endpoint to check email quota status
 router.get('/email-quota', async (req, res) => {
   try {
