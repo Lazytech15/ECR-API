@@ -1310,7 +1310,7 @@ router.post('/nfccommunication', async (req, res) => {
           const newCount = await incrementEmailCount();
           
           await transporter.sendMail({
-            from: '"Next-Gen-Pemss" <projectipt00@gmail.com>',
+            from: '"NextGen-Pemss" <projectipt00@gmail.com>',
             to: data.to,
             subject: data.subject,
             html: data.content
