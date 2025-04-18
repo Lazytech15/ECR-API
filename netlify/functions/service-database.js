@@ -42,7 +42,7 @@ const allowedOrigins = [
   'http://localhost:3000',
   'https://mailer.cyberdyne.top',
   'https://ecr-api-connection-database.netlify.app',
-  'https://next-gen-pemss.netlify.app/'
+  'https://next-gen-pemss.netlify.app'
 ];
 
 const corsOptions = {
